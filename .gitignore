@@ -1,0 +1,65 @@
+# ── Unity ────────────────────────────────────────────────────────────────────
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emory[Cc]aptures/
+[Uu]ser[Ss]ettings/
+*.csproj
+*.sln
+*.pidb
+*.suo
+*.userprefs
+*.unityproj
+.DS_Store
+*.booproj
+sysinfo.txt
+crashlytics-build.properties
+
+# Asset meta files (no borrar — Unity los necesita)
+# *.meta  ← NO ignorar, Unity los usa
+
+# ── Python ───────────────────────────────────────────────────────────────────
+# Entornos virtuales (cada quien crea el suyo localmente)
+venv/
+env/
+.venv/
+ENV/
+motion_ml_app/venv/
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Archivos sensibles ────────────────────────────────────────────────────────
+.env
+.env.*
+*.env
+secrets.py
+
+# ── Datos generados (no subir al repo) ────────────────────────────────────────
+# Secuencias grabadas (pueden ser grandes)
+motion_ml_app/data/sequences/
+
+# Modelos entrenados (archivos pesados)
+motion_ml_app/data/motion_model.pt
+motion_ml_app/data/label_map.pt
+motion_ml_app/data/historial_scores.json
+
+# El modelo YOLO preentrenado (6.5MB — se descarga con ultralytics automáticamente)
+motion_ml_app/yolov8n.pt
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
