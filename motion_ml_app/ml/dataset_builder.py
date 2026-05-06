@@ -23,6 +23,16 @@ class MotionDataset(Dataset):
             return
             
         label_idx = 0
+        
+        # Lista de huesos esperados para asegurar un orden estricto de las características
+        expected_bones = [
+            "mixamorig:LeftArm", "mixamorig:RightArm",
+            "mixamorig:LeftForeArm", "mixamorig:RightForeArm",
+            "mixamorig:LeftUpLeg", "mixamorig:RightUpLeg",
+            "mixamorig:LeftLeg", "mixamorig:RightLeg",
+            "mixamorig:Spine"
+        ]
+        
         for file in os.listdir(self.data_dir):
             if file.endswith('.json'):
                 path = os.path.join(self.data_dir, file)
@@ -35,17 +45,18 @@ class MotionDataset(Dataset):
                         self.label_map[movement_name] = label_idx
                         label_idx += 1
                     
-                    # frame_data: lista de diccionarios con landmarks
-                    # Lo aplanamos a [num_frames, 33*3] (x,y,z para 33 landmarks de MediaPipe)
+                    # frames es una lista de {"frame": 0, "landmarks": {"mixamorig:LeftArm": {...}}}
                     frames = data.get("frames", [])
                     seq_array = []
                     for frame in frames:
-                        landmarks = frame.get("landmarks", {})
+                        bone_vectors = frame.get("landmarks", {})
                         frame_features = []
-                        # Extraer solo x,y,z en orden (99 valores por frame)
-                        for i in range(33):
-                            lm = landmarks.get(str(i), {'x': 0.0, 'y': 0.0, 'z': 0.0})
-                            frame_features.extend([lm['x'], lm['y'], lm['z']])
+                        
+                        # Extraer vectores en orden (9 huesos * 3 coords = 27 valores por frame)
+                        for bone in expected_bones:
+                            vec = bone_vectors.get(bone, {'x': 0.0, 'y': 0.0, 'z': 0.0})
+                            frame_features.extend([vec['x'], vec['y'], vec['z']])
+                            
                         seq_array.append(frame_features)
                     
                     if len(seq_array) > 0:

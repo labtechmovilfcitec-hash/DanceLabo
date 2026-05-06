@@ -7,12 +7,12 @@ class MotionLSTMGenerator(nn.Module):
     Recibe el ID o nombre codificado del movimiento que debe ejecutar, 
     y genera (predice) la secuencia temporal completa de posiciones corporales.
     """
-    def __init__(self, num_classes, hidden_size=256, num_layers=3, output_size=99, max_seq_length=150):
+    def __init__(self, num_classes, hidden_size=256, num_layers=3, output_size=27, max_seq_length=150):
         """
         num_classes: Cuantos movimientos diferentes conoce
         hidden_size: Memoria del LSTM
         num_layers: Profundidad del LSTM
-        output_size: 99 (33 landmarks * 3 coordenadas x,y,z)
+        output_size: 27 (9 huesos Mixamo * 3 coordenadas x,y,z)
         max_seq_length: Longitud maxima de cuadros a generar
         """
         super(MotionLSTMGenerator, self).__init__()
