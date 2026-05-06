@@ -1,7 +1,7 @@
 PyQt6
 opencv-python
 ultralytics
-mediapipe
+mediapipe==0.10.14
 filterpy
 torch
 scikit-learn

@@ -32,8 +32,10 @@ class MixamoMapper:
         MediaPipe: +X derecha, +Y abajo, +Z atrás (lejos de cámara).
         Unity: +X derecha, +Y arriba, +Z adelante (hacia la cámara / profundidad).
         """
-        # Multiplicamos Y y Z por -1 para adaptar ejes
-        return np.array([lm['x'], -lm['y'], -lm['z']])
+        # Multiplicamos Y por -1 para adaptar ejes (arriba/abajo). 
+        # Z se mantiene porque MediaPipe Z negativo es más cerca a la cámara,
+        # y en Unity Z negativo también es más cerca a la cámara (si mira hacia ella).
+        return np.array([lm['x'], -lm['y'], lm['z']])
 
     def get_bone_vectors(self, landmarks_data):
         """

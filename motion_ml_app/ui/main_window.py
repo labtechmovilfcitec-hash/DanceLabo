@@ -33,6 +33,11 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         self.recorded_frames = []
         
+        # Optimizacion YOLO y camara
+        self.is_camera = False
+        self.yolo_frame_count = 0
+        self.last_yolo_box = None
+        
         self._init_ui()
         
     def _init_ui(self):
@@ -140,18 +145,26 @@ class MainWindow(QMainWindow):
             if self.video_capture:
                 self.video_capture.release()
             self.video_capture = cv2.VideoCapture(filename)
+            self.is_camera = False
             self.play_video()
             
     def use_camera(self):
         if self.video_capture:
             self.video_capture.release()
         
-        # El 0 suele ser la webcam por defecto de la laptop o PC
-        self.video_capture = cv2.VideoCapture(0)
+        # Intentar con DirectShow para evitar buffer largo en Windows
+        self.video_capture = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if not self.video_capture.isOpened():
+            self.video_capture = cv2.VideoCapture(0)
+            self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
         if not self.video_capture.isOpened():
             self.lbl_record_status.setText("Error: No se detectó cámara web.")
             return
             
+        self.is_camera = True
         self.play_video()
             
     def play_video(self):
@@ -162,6 +175,12 @@ class MainWindow(QMainWindow):
         self.timer.stop()
         
     def update_frame(self):
+        # Limpiar buffer para evitar latencia (lag)
+        if self.is_camera:
+            # Leer varios frames de golpe sin decodificar
+            for _ in range(4):
+                self.video_capture.grab()
+                
         ret, frame = self.video_capture.read()
         if not ret:
             self.timer.stop()
@@ -174,8 +193,16 @@ class MainWindow(QMainWindow):
         frame = cv2.resize(frame, (800, 600))
         original_shape = frame.shape
         
-        # 1. Deteccion con YOLO
-        box = self.detector.detect_person(frame)
+        # 1. Deteccion con YOLO (Optimizada: cada 10 frames)
+        if self.yolo_frame_count % 10 == 0 or self.last_yolo_box is None:
+            box = self.detector.detect_person(frame)
+            if box is not None:
+                self.last_yolo_box = box
+        else:
+            box = self.last_yolo_box
+            
+        self.yolo_frame_count += 1
+        
         cropped, offset = self.detector.crop_person(frame, box)
         
         if box is not None:

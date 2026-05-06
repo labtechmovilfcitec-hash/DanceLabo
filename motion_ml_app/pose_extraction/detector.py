@@ -1,16 +1,22 @@
 import cv2
+import torch
 from ultralytics import YOLO
 
 class PersonDetector:
     def __init__(self, model_name='yolov8n.pt'):
         # Carga el modelo YOLOv8 nano preentrenado (es el mas rapido)
         self.model = YOLO(model_name)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        if self.device == 'cuda':
+            print("YOLOv8 usando GPU (CUDA)!")
+        else:
+            print("YOLOv8 usando CPU.")
     
     def detect_person(self, frame):
         """
         Detecta a la persona en el frame y devuelve el bounding box mas grande o centrado.
         """
-        results = self.model(frame, classes=[0], verbose=False) # class 0 es 'person'
+        results = self.model(frame, classes=[0], verbose=False, device=self.device) # class 0 es 'person'
         
         best_box = None
         max_area = 0
