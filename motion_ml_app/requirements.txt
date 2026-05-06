@@ -1,0 +1,7 @@
+PyQt6
+opencv-python
+ultralytics
+mediapipe
+filterpy
+torch
+scikit-learn
