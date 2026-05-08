@@ -217,6 +217,11 @@ GameObject:
   m_CorrespondingSourceObject: {fileID: 2341270832078025510, guid: 5367a9d8e1556eb4eb3b570fe5af5da9, type: 3}
   m_PrefabInstance: {fileID: 1117746924}
   m_PrefabAsset: {fileID: 0}
+--- !u!4 &143652811 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 2341270832078025504, guid: 5367a9d8e1556eb4eb3b570fe5af5da9, type: 3}
+  m_PrefabInstance: {fileID: 1117746924}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &202038005 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -3035820178513568350, guid: de0a78fb99424a048a79a3c2ecd81f21, type: 3}
@@ -391,6 +396,11 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
+--- !u!95 &835050023 stripped
+Animator:
+  m_CorrespondingSourceObject: {fileID: 8149062055231576477, guid: 5367a9d8e1556eb4eb3b570fe5af5da9, type: 3}
+  m_PrefabInstance: {fileID: 1117746924}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &841424950 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6000407479487422213, guid: c5f1a3a390ffd4f419e2b647493d28cb, type: 3}
@@ -625,7 +635,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: 2341270832078025504, guid: 5367a9d8e1556eb4eb3b570fe5af5da9, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1994793976}
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 5367a9d8e1556eb4eb3b570fe5af5da9, type: 3}
 --- !u!4 &1270405431 stripped
@@ -762,6 +775,55 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1994793975
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1994793976}
+  - component: {fileID: 1994793977}
+  m_Layer: 0
+  m_Name: Recorder
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1994793976
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1994793975}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 143652811}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1994793977
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1994793975}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c7f3643804f96c749b6a8c4b7ce137df, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp-firstpass::Dollars.PoseRecorder
+  IsRecording: 1
+  FileName: RobotRecording
+  TargetFPS: 30
+  TargetAnimator: {fileID: 835050023}
+  RecordedFramesCount: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

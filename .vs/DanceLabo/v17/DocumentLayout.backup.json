@@ -1,0 +1,54 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\roble\\DanceLabo\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{E8C3FFA4-7B27-8359-D992-768F8020BBE4}|Assembly-CSharp-firstpass.csproj|c:\\users\\roble\\dancelabo\\assets\\plugins\\dollarsmocap\\scripts\\poserecorder.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{E8C3FFA4-7B27-8359-D992-768F8020BBE4}|Assembly-CSharp-firstpass.csproj|solutionrelative:assets\\plugins\\dollarsmocap\\scripts\\poserecorder.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{E8C3FFA4-7B27-8359-D992-768F8020BBE4}|Assembly-CSharp-firstpass.csproj|c:\\users\\roble\\dancelabo\\assets\\plugins\\dollarsmocap\\scripts\\studentposereceiver.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{E8C3FFA4-7B27-8359-D992-768F8020BBE4}|Assembly-CSharp-firstpass.csproj|solutionrelative:assets\\plugins\\dollarsmocap\\scripts\\studentposereceiver.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 464,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "PoseRecorder.cs",
+              "DocumentMoniker": "C:\\Users\\roble\\DanceLabo\\Assets\\Plugins\\DollarsMoCap\\Scripts\\PoseRecorder.cs",
+              "RelativeDocumentMoniker": "Assets\\Plugins\\DollarsMoCap\\Scripts\\PoseRecorder.cs",
+              "ToolTip": "C:\\Users\\roble\\DanceLabo\\Assets\\Plugins\\DollarsMoCap\\Scripts\\PoseRecorder.cs",
+              "RelativeToolTip": "Assets\\Plugins\\DollarsMoCap\\Scripts\\PoseRecorder.cs",
+              "ViewState": "AgIAAE4AAAAAAAAAAAAowF4AAAAvAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-05-07T06:50:56.181Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "StudentPoseReceiver.cs",
+              "DocumentMoniker": "C:\\Users\\roble\\DanceLabo\\Assets\\Plugins\\DollarsMoCap\\Scripts\\StudentPoseReceiver.cs",
+              "RelativeDocumentMoniker": "Assets\\Plugins\\DollarsMoCap\\Scripts\\StudentPoseReceiver.cs",
+              "ToolTip": "C:\\Users\\roble\\DanceLabo\\Assets\\Plugins\\DollarsMoCap\\Scripts\\StudentPoseReceiver.cs",
+              "RelativeToolTip": "Assets\\Plugins\\DollarsMoCap\\Scripts\\StudentPoseReceiver.cs",
+              "ViewState": "AgIAAB0AAAAAAAAAAAAAACoAAAAJAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-05-07T05:23:56.938Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
