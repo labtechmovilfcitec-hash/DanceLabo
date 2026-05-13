@@ -93,11 +93,19 @@ def cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
 
 def segment_similarity(student_vec: np.ndarray,
                         reference_vec: np.ndarray,
-                        bone_names: list) -> float:
-    """Similitud coseno de un segmento corporal (lista de huesos)."""
+                        bone_names: list):
+    """
+    Similitud coseno de un segmento corporal.
+    Devuelve None si ambos vectores son cero (hueso no grabado en el dataset).
+    """
     indices = [BONE_INDEX[b] for b in bone_names if b in BONE_INDEX]
     seg_s = np.concatenate([student_vec[i*3:(i+1)*3]   for i in indices])
     seg_r = np.concatenate([reference_vec[i*3:(i+1)*3] for i in indices])
+
+    # Si ambos son cero, el hueso no estaba en los datos de entrenamiento → ignorar
+    if np.linalg.norm(seg_s) < 1e-6 and np.linalg.norm(seg_r) < 1e-6:
+        return None
+
     return cosine_similarity(seg_s, seg_r)
 
 
@@ -179,20 +187,27 @@ class ScoringEngine:
         student_vec   = bones_dict_to_vector(bones_dict)
         reference_vec = lstm_frame_to_vector(reference_frame_tensor)
 
-        # Calcular similitud por segmento
+        # Calcular similitud por segmento (None = hueso sin datos)
         segment_scores = {}
+        valid_weight_total = 0.0
         for seg_name, bones in BODY_SEGMENTS.items():
             sim = segment_similarity(student_vec, reference_vec, bones)
             segment_scores[seg_name] = sim
-            self._segment_accumulators[seg_name].append(sim)
+            if sim is not None:
+                valid_weight_total += SEGMENT_WEIGHTS[seg_name]
+            self._segment_accumulators[seg_name].append(sim if sim is not None else None)
 
-        # Score global ponderado
-        overall = sum(
-            segment_scores[seg] * SEGMENT_WEIGHTS[seg]
-            for seg in BODY_SEGMENTS
-        )
+        # Score global — solo sobre segmentos con datos reales, normalizado
+        overall = 0.0
+        if valid_weight_total > 0:
+            for seg_name, sim in segment_scores.items():
+                if sim is not None:
+                    overall += sim * (SEGMENT_WEIGHTS[seg_name] / valid_weight_total)
 
-        colors = {seg: color_for_score(s) for seg, s in segment_scores.items()}
+        colors = {
+            seg: color_for_score(s) if s is not None else "gris"
+            for seg, s in segment_scores.items()
+        }
 
         result = {
             "overall":       overall,
@@ -209,19 +224,30 @@ class ScoringEngine:
             return {"score_pct": 0.0, "label": "Sin datos",
                     "desglose": {}, "total_frames": 0}
 
-        desglose = {
-            seg: round(np.mean(vals) * 100, 1) if vals else 0.0
-            for seg, vals in self._segment_accumulators.items()
-        }
+        # Promediar solo valores válidos por segmento (ignorar None)
+        desglose = {}
+        valid_segs = {}
+        for seg, vals in self._segment_accumulators.items():
+            real_vals = [v for v in vals if v is not None]
+            if real_vals:
+                pct = round(np.mean(real_vals) * 100, 1)
+                desglose[seg] = pct
+                valid_segs[seg] = pct
+            else:
+                desglose[seg] = None   # sin datos
 
-        score_total = sum(
-            (desglose[seg] / 100.0) * SEGMENT_WEIGHTS[seg]
-            for seg in BODY_SEGMENTS
+        # Score global normalizado sobre segmentos con datos
+        valid_weight_total = sum(
+            SEGMENT_WEIGHTS[seg] for seg in valid_segs
         )
+        score_total = 0.0
+        if valid_weight_total > 0:
+            for seg, pct in valid_segs.items():
+                score_total += (pct / 100.0) * (SEGMENT_WEIGHTS[seg] / valid_weight_total)
         score_pct = round(score_total * 100, 1)
 
-        mejor = max(desglose, key=desglose.get)
-        peor  = min(desglose, key=desglose.get)
+        mejor = max(valid_segs, key=valid_segs.get) if valid_segs else "N/A"
+        peor  = min(valid_segs, key=valid_segs.get) if valid_segs else "N/A"
 
         result = {
             "movement":        self._movement_name,
