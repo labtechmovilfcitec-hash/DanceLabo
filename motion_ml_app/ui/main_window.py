@@ -184,10 +184,11 @@ class MainWindow(QMainWindow):
     def _run_training(self):
         try:
             train_model()
-            self.training_finished_signal.emit("Entrenamiento completado en data/models/motion_lstm.pt!")
+            self.training_finished_signal.emit("✅ Entrenamiento completado. Modelo en data/motion_model.pt")
         except Exception as e:
-            print(f"Error en entrenamiento: {e}")
-            self.training_finished_signal.emit(f"Error en entrenamiento: {e}")
+            import traceback
+            print(f"[Error entrenamiento]\n{traceback.format_exc()}")
+            self.training_finished_signal.emit(f"❌ Error: {e}")
             
     def on_training_finished(self, msg):
         self.lbl_record_status.setText(msg)

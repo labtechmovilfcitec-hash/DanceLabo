@@ -1,76 +1,127 @@
+"""
+ml/trainer.py  —  Entrenador LSTM (Dance Labo)
+Equivalente completo a train.py pero importable desde la UI.
+"""
+
 import os
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from ml.dataset_builder import MotionDataset
 from ml.model import MotionLSTMGenerator
 
-def train_model(epochs=150, batch_size=4, lr=0.001):
-    print("Iniciando entrenamiento...")
-    
-    dataset = MotionDataset()
-    if len(dataset) == 0:
-        print("Error: El dataset esta vacio. Graba algunas secuencias en la UI primero.")
-        return
-        
-    print(f"Dataset cargado con {len(dataset)} secuencias.")
-    print(f"Clases detectadas: {dataset.label_map}")
-    
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    
-    # Configuracion del dispositivo
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Usando dispositivo: {device}")
-    
-    # Inicializar modelo
-    num_classes = len(dataset.label_map)
-    # output_size = 27 (9 vectores * 3 coordenadas)
-    model = MotionLSTMGenerator(num_classes=num_classes, max_seq_length=dataset.max_length).to(device)
-    
-    # Loss y optimizador
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    
-    # Bucle de entrenamiento
-    for epoch in range(epochs):
-        epoch_loss = 0.0
-        
-        for sequences, labels in dataloader:
-            sequences = sequences.to(device)
-            labels = labels.to(device)
-            
-            # Forward pass: El modelo intenta generar la secuencia dado el ID de la etiqueta
-            optimizer.zero_grad()
-            
-            # generated_seq shape: (batch_size, max_seq_length, 27)
-            generated_seq = model(labels, seq_length=sequences.size(1))
-            
-            # Calcular la diferencia (error) entre lo generado y el movimiento real
-            loss = criterion(generated_seq, sequences)
-            
-            # Backward pass y optimizacion
-            loss.backward()
-            optimizer.step()
-            
-            epoch_loss += loss.item()
-            
-        avg_loss = epoch_loss / len(dataloader)
-        if (epoch + 1) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}")
-            
-    # Guardar el modelo entrenado
-    os.makedirs('data/models', exist_ok=True)
-    
-    save_info = {
-        'model_state_dict': model.state_dict(),
-        'label_map': dataset.label_map,
-        'max_seq_length': dataset.max_length
-    }
-    
-    torch.save(save_info, 'data/models/motion_lstm.pt')
-    print("Entrenamiento completado. Modelo guardado en 'data/models/motion_lstm.pt'")
+# ── Rutas (relativas a motion_ml_app/) ────────────────────────────────────────
+MODEL_PATH  = "data/motion_model.pt"
+LABEL_PATH  = "data/label_map.pt"
+DATA_DIR    = "data/sequences"
 
-if __name__ == "__main__":
-    train_model()
+# ── Hiperparámetros ────────────────────────────────────────────────────────────
+EPOCHS      = 150
+BATCH_SIZE  = 4
+LR          = 1e-3
+HIDDEN_SIZE = 256
+NUM_LAYERS  = 3
+OUTPUT_SIZE = 27   # 9 huesos Mixamo × 3 coords (xyz)
+
+
+def _collate_fn(batch):
+    """Padding dinámico para que todos los tensores del batch tengan el mismo largo."""
+    sequences, labels = zip(*batch)
+    max_len = max(s.size(0) for s in sequences)
+    padded = torch.zeros(len(sequences), max_len, sequences[0].size(1))
+    for i, s in enumerate(sequences):
+        padded[i, :s.size(0)] = s
+    return padded, torch.tensor(labels)
+
+
+def train_model(epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR):
+    """
+    Entrena el modelo LSTM y guarda:
+      - data/motion_model.pt   (pesos del mejor epoch)
+      - data/label_map.pt      (dict nombre → índice)
+    """
+    print("=" * 50)
+    print("  Dance Labo — Entrenamiento LSTM")
+    print("=" * 50)
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    # 1. Cargar dataset
+    dataset = MotionDataset(DATA_DIR)
+
+    if len(dataset) == 0:
+        raise RuntimeError(
+            f"No se encontraron secuencias en '{DATA_DIR}'. "
+            "Graba al menos una secuencia antes de entrenar."
+        )
+
+    print(f"\nMovimientos encontrados: {dataset.label_map}")
+    print(f"Total de muestras:       {len(dataset)}")
+    print(f"Longitud máx. secuencia: {dataset.max_length} frames")
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=_collate_fn,
+        drop_last=False,
+    )
+
+    # 2. Crear modelo
+    num_classes = len(dataset.label_map)
+    model = MotionLSTMGenerator(
+        num_classes=num_classes,
+        hidden_size=HIDDEN_SIZE,
+        num_layers=NUM_LAYERS,
+        output_size=OUTPUT_SIZE,
+        max_seq_length=dataset.max_length,
+    )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    print(f"\nDispositivo: {device}")
+    print(f"Clases: {num_classes}  |  Epochs: {epochs}  |  LR: {lr}\n")
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.MSELoss()
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
+
+    # 3. Bucle de entrenamiento
+    best_loss = float("inf")
+    for epoch in range(1, epochs + 1):
+        model.train()
+        epoch_loss = 0.0
+
+        for seqs, labels in loader:
+            seqs   = seqs.to(device)
+            labels = labels.to(device)
+
+            seq_len   = seqs.size(1)
+            generated = model(labels, seq_length=seq_len)
+
+            loss = criterion(generated, seqs)
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            epoch_loss += loss.item()
+
+        scheduler.step()
+        avg_loss = epoch_loss / len(loader)
+
+        # Guardar el mejor modelo
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            os.makedirs("data", exist_ok=True)
+            torch.save(model.state_dict(), MODEL_PATH)
+            torch.save(dataset.label_map, LABEL_PATH)
+
+        if epoch % 10 == 0 or epoch == 1:
+            bar = "#" * int((1 - min(avg_loss, 1)) * 20)
+            print(f"Epoch {epoch:4d}/{epochs} | Loss: {avg_loss:.6f} | Best: {best_loss:.6f} |{bar}")
+
+    print(f"\n✅ Entrenamiento completo.")
+    print(f"   Modelo guardado en: {MODEL_PATH}")
+    print(f"   Label map en:       {LABEL_PATH}")
+    print(f"   Loss final:         {best_loss:.6f}")
