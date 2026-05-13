@@ -114,11 +114,20 @@ class MainWindow(QMainWindow):
         self.btn_train.setStyleSheet("background-color: #005500; color: white;")
         form_layout.addRow(self.btn_train)
         
-        self.btn_play_unity = QPushButton("▶️ Reproducir en Unity")
+        self.btn_play_unity = QPushButton("🧠 Reproducir (LSTM)")
         self.btn_play_unity.clicked.connect(self.play_in_unity)
         self.btn_play_unity.setStyleSheet("background-color: #005555; color: white;")
         form_layout.addRow(self.btn_play_unity)
-        
+
+        self.btn_play_raw = QPushButton("📼 Secuencia Exacta")
+        self.btn_play_raw.clicked.connect(self.play_raw_in_unity)
+        self.btn_play_raw.setStyleSheet("background-color: #004488; color: white;")
+        self.btn_play_raw.setToolTip(
+            "Reproduce la grabación original frame a frame — sin pasar por el modelo LSTM.\n"
+            "El resultado es exactamente lo que capturaste con la cámara."
+        )
+        form_layout.addRow(self.btn_play_raw)
+
         self.lbl_record_status = QLabel("Estado: Inactivo")
         form_layout.addRow(self.lbl_record_status)
         
@@ -139,7 +148,10 @@ class MainWindow(QMainWindow):
         if not name:
             self.lbl_record_status.setText("Error: Ponle nombre primero!")
             return
-            
+
+        # Limpiar caché de pose congelada al iniciar nueva sesión
+        self.mapper.reset_cache()
+
         self.recorded_frames = []
         self.is_recording = True
         self.btn_record.setEnabled(False)
@@ -150,7 +162,10 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         self.btn_record.setEnabled(True)
         self.btn_stop_record.setEnabled(False)
-        
+
+        # Limpiar caché al terminar para no contaminar la próxima sesión
+        self.mapper.reset_cache()
+
         name = self.txt_dance_name.text().strip()
         if len(self.recorded_frames) > 0:
             self.dataset.save_sequence(name, self.recorded_frames)
@@ -178,41 +193,93 @@ class MainWindow(QMainWindow):
         self.lbl_record_status.setText(msg)
         self.btn_train.setEnabled(True)
         self.btn_play_unity.setEnabled(True)
+        self.btn_play_raw.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # Reproducción LSTM (generativa)
+    # ------------------------------------------------------------------
 
     def play_in_unity(self):
         name = self.txt_dance_name.text().strip()
         if not name:
             self.lbl_record_status.setText("Error: Ponle nombre al movimiento a reproducir!")
             return
-            
+
         self.btn_play_unity.setEnabled(False)
-        self.lbl_record_status.setText(f"Reproduciendo '{name}' en Unity...")
+        self.lbl_record_status.setText(f"[LSTM] Reproduciendo '{name}' en Unity...")
         self.is_playing_back = True
-        
+
         thread = threading.Thread(target=self._run_playback, args=(name,))
         thread.daemon = True
         thread.start()
-        
+
     def _run_playback(self, name):
         try:
             predictor = MotionPredictor()
             frames = predictor.predict_sequence(name)
-            
+
             if not frames:
-                self.training_finished_signal.emit(f"Error: Movimiento '{name}' no encontrado.")
+                self.training_finished_signal.emit(
+                    f"[LSTM] Error: '{name}' no reconocido. ¿Está entrenado?"
+                )
                 return
-                
+
             if self.udp_server:
                 for frame in frames:
                     self.udp_server.send_pose(frame)
-                    time.sleep(1.0 / 30.0) # ~30 FPS
-                    
-            self.training_finished_signal.emit(f"Reproducción de '{name}' finalizada.")
+                    time.sleep(1.0 / 30.0)  # ~30 FPS
+
+            self.training_finished_signal.emit(f"[LSTM] Reproducción de '{name}' finalizada.")
         except Exception as e:
-            print(f"Error en reproducción: {e}")
-            self.training_finished_signal.emit(f"Error en reproducción: {e}")
+            print(f"Error en reproducción LSTM: {e}")
+            self.training_finished_signal.emit(f"Error LSTM: {e}")
         finally:
             self.is_playing_back = False
+            self.btn_play_unity.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # Reproducción directa desde JSON (exacta)
+    # ------------------------------------------------------------------
+
+    def play_raw_in_unity(self):
+        name = self.txt_dance_name.text().strip()
+        if not name:
+            self.lbl_record_status.setText("Error: Ponle nombre al movimiento a reproducir!")
+            return
+
+        self.btn_play_raw.setEnabled(False)
+        self.lbl_record_status.setText(f"[Exacto] Reproduciendo '{name}' en Unity...")
+        self.is_playing_back = True
+
+        thread = threading.Thread(target=self._run_raw_playback, args=(name,))
+        thread.daemon = True
+        thread.start()
+
+    def _run_raw_playback(self, name):
+        try:
+            predictor = MotionPredictor()
+            frames = predictor.playback_raw_sequence(name)
+
+            if not frames:
+                self.training_finished_signal.emit(
+                    f"[Exacto] No se encontró la secuencia grabada para '{name}'."
+                )
+                return
+
+            if self.udp_server:
+                for frame in frames:
+                    self.udp_server.send_pose(frame)
+                    time.sleep(1.0 / 30.0)  # ~30 FPS
+
+            self.training_finished_signal.emit(
+                f"[Exacto] Reproducción de '{name}' finalizada ({len(frames)} frames)."
+            )
+        except Exception as e:
+            print(f"Error en reproducción directa: {e}")
+            self.training_finished_signal.emit(f"Error Exacto: {e}")
+        finally:
+            self.is_playing_back = False
+            self.btn_play_raw.setEnabled(True)
 
     def load_video(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Abrir Video", "", "Video Files (*.mp4 *.avi *.mov)")

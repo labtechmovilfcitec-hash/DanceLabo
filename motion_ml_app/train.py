@@ -12,6 +12,8 @@ Requisitos previos:
 """
 
 import os
+import sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -19,9 +21,9 @@ from ml.model import MotionLSTMGenerator
 from ml.dataset_builder import MotionDataset
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-DATA_DIR     = "../data/sequences"   # relativo a motion_ml_app/
-MODEL_PATH   = "../data/motion_model.pt"
-LABEL_PATH   = "../data/label_map.pt"
+DATA_DIR     = "data/sequences"   # relativo a motion_ml_app/
+MODEL_PATH   = "data/motion_model.pt"
+LABEL_PATH   = "data/label_map.pt"
 EPOCHS       = 150
 BATCH_SIZE   = 4
 LR           = 1e-3
@@ -31,7 +33,7 @@ OUTPUT_SIZE  = 27   # 9 huesos Mixamo × 3 coords (xyz)
 
 
 
-os.makedirs("../data", exist_ok=True)
+os.makedirs("data/sequences", exist_ok=True)
 
 
 
@@ -114,7 +116,7 @@ def train():
             torch.save(dataset.label_map, LABEL_PATH)
 
         if epoch % 10 == 0 or epoch == 1:
-            bar = "█" * int((1 - min(avg_loss, 1)) * 20)
+            bar = "#" * int((1 - min(avg_loss, 1)) * 20)
             print(f"Epoch {epoch:4d}/{EPOCHS} | Loss: {avg_loss:.6f} | Best: {best_loss:.6f} |{bar}")
 
     print(f"\n✅ Entrenamiento completo.")

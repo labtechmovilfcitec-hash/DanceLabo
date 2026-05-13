@@ -19,9 +19,9 @@ from ml.scoring_engine import (
     EXPECTED_BONES
 )
 
-MODEL_PATH = "../data/motion_model.pt"
-LABEL_PATH = "../data/label_map.pt"
-SEQ_DIR    = "../data/sequences"
+MODEL_PATH = "data/motion_model.pt"
+LABEL_PATH = "data/label_map.pt"
+SEQ_DIR    = "data/sequences"
 
 
 def load_model():
