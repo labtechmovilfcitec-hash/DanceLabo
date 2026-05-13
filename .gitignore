@@ -18,8 +18,8 @@
 sysinfo.txt
 crashlytics-build.properties
 
-# Asset meta files (no borrar — Unity los necesita)
-# *.meta  ← NO ignorar, Unity los usa
+# Asset meta files (no borrar - Unity los necesita)
+# *.meta  <- NO ignorar, Unity los usa
 
 # ── Python ───────────────────────────────────────────────────────────────────
 # Entornos virtuales (cada quien crea el suyo localmente)
@@ -41,18 +41,16 @@ __pycache__/
 .env.*
 *.env
 secrets.py
+jira_import.py
 
 # ── Datos generados (no subir al repo) ────────────────────────────────────────
-# Secuencias grabadas (pueden ser grandes)
-motion_ml_app/data/sequences/
-
-# Modelos entrenados (archivos pesados)
-motion_ml_app/data/motion_model.pt
-motion_ml_app/data/label_map.pt
-motion_ml_app/data/historial_scores.json
-
-# El modelo YOLO preentrenado (6.5MB — se descarga con ultralytics automáticamente)
-motion_ml_app/yolov8n.pt
+# Solo datos pesados - el codigo si se sube
+data/sequences/
+data/motion_model.pt
+data/label_map.pt
+data/historial_scores.json
+yolov8n.pt
+*.pt
 
 # ── IDEs ──────────────────────────────────────────────────────────────────────
 .vscode/settings.json
@@ -67,3 +65,4 @@ Desktop.ini
 # ── Archivos grandes ──────────────────────────────────────────────────────────
 *.zip
 LABITO.zip
+*.csv

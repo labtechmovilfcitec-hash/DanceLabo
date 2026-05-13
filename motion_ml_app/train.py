@@ -19,16 +19,20 @@ from ml.model import MotionLSTMGenerator
 from ml.dataset_builder import MotionDataset
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-DATA_DIR    = "data/sequences"
-MODEL_PATH  = "data/motion_model.pt"
-LABEL_PATH  = "data/label_map.pt"
-EPOCHS      = 150
-BATCH_SIZE  = 4
-LR          = 1e-3
-HIDDEN_SIZE = 256
-NUM_LAYERS  = 3
+DATA_DIR     = "../data/sequences"   # relativo a motion_ml_app/
+MODEL_PATH   = "../data/motion_model.pt"
+LABEL_PATH   = "../data/label_map.pt"
+EPOCHS       = 150
+BATCH_SIZE   = 4
+LR           = 1e-3
+HIDDEN_SIZE  = 256
+NUM_LAYERS   = 3
+OUTPUT_SIZE  = 27   # 9 huesos Mixamo × 3 coords (xyz)
 
-os.makedirs("data", exist_ok=True)
+
+
+os.makedirs("../data", exist_ok=True)
+
 
 
 def collate_fn(batch):
@@ -67,7 +71,7 @@ def train():
         num_classes=num_classes,
         hidden_size=HIDDEN_SIZE,
         num_layers=NUM_LAYERS,
-        output_size=99,
+        output_size=OUTPUT_SIZE,      # 27 (9 huesos Mixamo × xyz)
         max_seq_length=dataset.max_length
     )
 
@@ -87,11 +91,11 @@ def train():
         epoch_loss = 0.0
 
         for seqs, labels in loader:
-            seqs   = seqs.to(device)      # (B, T, 99)
+            seqs   = seqs.to(device)      # (B, T, 27)
             labels = labels.to(device)    # (B,)
 
             seq_len = seqs.size(1)
-            generated = model(labels, seq_length=seq_len)  # (B, T, 99)
+            generated = model(labels, seq_length=seq_len)  # (B, T, 27)
 
             loss = criterion(generated, seqs)
             optimizer.zero_grad()
