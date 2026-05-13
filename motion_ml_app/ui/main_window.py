@@ -3,15 +3,21 @@ import cv2
 import numpy as np
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QLineEdit, QGroupBox, QFormLayout)
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
+import threading
 
 from pose_extraction.detector import PersonDetector
 from pose_extraction.landmark_extractor import PoseExtractor
 from pose_extraction.mixamo_mapper import MixamoMapper
 from ml.dataset_builder import MotionDataset
+from ml.trainer import train_model
+from ml.predictor import MotionPredictor
+import time
 
 class MainWindow(QMainWindow):
+    training_finished_signal = pyqtSignal(str)
+
     def __init__(self, udp_server=None):
         super().__init__()
         self.udp_server = udp_server
@@ -37,6 +43,7 @@ class MainWindow(QMainWindow):
         self.is_camera = False
         self.yolo_frame_count = 0
         self.last_yolo_box = None
+        self.is_playing_back = False
         
         self._init_ui()
         
@@ -102,8 +109,20 @@ class MainWindow(QMainWindow):
         self.btn_stop_record.setEnabled(False)
         form_layout.addRow(self.btn_stop_record)
         
+        self.btn_train = QPushButton("🧠 Entrenar Modelo")
+        self.btn_train.clicked.connect(self.start_training)
+        self.btn_train.setStyleSheet("background-color: #005500; color: white;")
+        form_layout.addRow(self.btn_train)
+        
+        self.btn_play_unity = QPushButton("▶️ Reproducir en Unity")
+        self.btn_play_unity.clicked.connect(self.play_in_unity)
+        self.btn_play_unity.setStyleSheet("background-color: #005555; color: white;")
+        form_layout.addRow(self.btn_play_unity)
+        
         self.lbl_record_status = QLabel("Estado: Inactivo")
         form_layout.addRow(self.lbl_record_status)
+        
+        self.training_finished_signal.connect(self.on_training_finished)
         
         group_record.setLayout(form_layout)
         side_layout.addWidget(group_record)
@@ -138,6 +157,62 @@ class MainWindow(QMainWindow):
             self.lbl_record_status.setText(f"Guardado '{name}' con {len(self.recorded_frames)} frames.")
         else:
             self.lbl_record_status.setText("Cancelado: No hay frames grabados.")
+
+    def start_training(self):
+        self.btn_train.setEnabled(False)
+        self.lbl_record_status.setText("Entrenando... (Revisa consola para progreso)")
+        
+        thread = threading.Thread(target=self._run_training)
+        thread.daemon = True
+        thread.start()
+        
+    def _run_training(self):
+        try:
+            train_model()
+            self.training_finished_signal.emit("Entrenamiento completado en data/models/motion_lstm.pt!")
+        except Exception as e:
+            print(f"Error en entrenamiento: {e}")
+            self.training_finished_signal.emit(f"Error en entrenamiento: {e}")
+            
+    def on_training_finished(self, msg):
+        self.lbl_record_status.setText(msg)
+        self.btn_train.setEnabled(True)
+        self.btn_play_unity.setEnabled(True)
+
+    def play_in_unity(self):
+        name = self.txt_dance_name.text().strip()
+        if not name:
+            self.lbl_record_status.setText("Error: Ponle nombre al movimiento a reproducir!")
+            return
+            
+        self.btn_play_unity.setEnabled(False)
+        self.lbl_record_status.setText(f"Reproduciendo '{name}' en Unity...")
+        self.is_playing_back = True
+        
+        thread = threading.Thread(target=self._run_playback, args=(name,))
+        thread.daemon = True
+        thread.start()
+        
+    def _run_playback(self, name):
+        try:
+            predictor = MotionPredictor()
+            frames = predictor.predict_sequence(name)
+            
+            if not frames:
+                self.training_finished_signal.emit(f"Error: Movimiento '{name}' no encontrado.")
+                return
+                
+            if self.udp_server:
+                for frame in frames:
+                    self.udp_server.send_pose(frame)
+                    time.sleep(1.0 / 30.0) # ~30 FPS
+                    
+            self.training_finished_signal.emit(f"Reproducción de '{name}' finalizada.")
+        except Exception as e:
+            print(f"Error en reproducción: {e}")
+            self.training_finished_signal.emit(f"Error en reproducción: {e}")
+        finally:
+            self.is_playing_back = False
 
     def load_video(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Abrir Video", "", "Video Files (*.mp4 *.avi *.mov)")
@@ -189,6 +264,9 @@ class MainWindow(QMainWindow):
                 self.stop_recording()
             return
             
+        if self.is_camera:
+            frame = cv2.flip(frame, 1) # Espejar la cámara para que izquierda sea izquierda
+            
         # Redimensionar para procesamiento mas rapido
         frame = cv2.resize(frame, (800, 600))
         original_shape = frame.shape
@@ -223,7 +301,7 @@ class MainWindow(QMainWindow):
 
                 # Calcular vectores y enviar
                 bone_vectors = self.mapper.get_bone_vectors(landmarks)
-                if self.udp_server:
+                if self.udp_server and not self.is_playing_back:
                     self.udp_server.send_pose(bone_vectors)
                     
                 # Si estamos grabando, guardar en la memoria temporal

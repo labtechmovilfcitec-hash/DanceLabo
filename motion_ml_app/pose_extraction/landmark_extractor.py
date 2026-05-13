@@ -7,7 +7,7 @@ class PoseExtractor:
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=static_image_mode,
-            model_complexity=1, # 0, 1, o 2 (1 es buen balance velocidad/precision)
+            model_complexity=0, # 0, 1, o 2 (1 es buen balance velocidad/precision)
             smooth_landmarks=True,
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence

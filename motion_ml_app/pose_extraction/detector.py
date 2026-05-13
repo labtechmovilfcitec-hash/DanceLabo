@@ -16,7 +16,7 @@ class PersonDetector:
         """
         Detecta a la persona en el frame y devuelve el bounding box mas grande o centrado.
         """
-        results = self.model(frame, classes=[0], verbose=False, device=self.device) # class 0 es 'person'
+        results = self.model(frame, classes=[0], verbose=False, device=self.device, imgsz=320) # class 0 es 'person'
         
         best_box = None
         max_area = 0

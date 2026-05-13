@@ -8,7 +8,6 @@ using Newtonsoft.Json.Linq;
 public class MixamoAnimator : MonoBehaviour
 {
     public UDPClient udpClient;
-    public bool mirrorMode = true; // Invierte el eje X visualmente para comportarse como espejo
     
     [Header("Mixamo Bones")]
     public Transform leftUpLeg;
@@ -89,9 +88,10 @@ public class MixamoAnimator : MonoBehaviour
             ApplyBoneTransform(leftLeg, vectors["mixamorig:LeftLeg"]);
             ApplyBoneTransform(rightLeg, vectors["mixamorig:RightLeg"]);
         }
-        catch (System.Exception)
+        catch (System.Exception e)
         {
             // Silenciar para no inundar la consola si llega un paquete malformado en UDP
+            // Debug.LogError("Error parsing pose vectors: " + e.Message);
         }
     }
 
@@ -104,11 +104,6 @@ public class MixamoAnimator : MonoBehaviour
             float y = (float)data["y"];
             float z = (float)data["z"];
             
-            // Eliminamos la inversión de X (mirrorMode) porque MediaPipe ya nos da un
-            // sistema de coordenadas nativamente espejeado cuando miramos a la webcam.
-            // Invertir la X causaba que el hueso se "atorara" apuntando hacia afuera
-            // y no pudiera cruzar el pecho del personaje.
-            
             Vector3 targetDir = new Vector3(x, y, z).normalized;
             Vector3 initialDir = initialDirections[bone];
             
@@ -120,7 +115,7 @@ public class MixamoAnimator : MonoBehaviour
                 
                 // Aplicamos rotacion al hueso original usando Slerp para suavizar el movimiento
                 Quaternion targetRotation = rot * initialRotations[bone];
-                bone.rotation = Quaternion.Slerp(bone.rotation, targetRotation, Time.deltaTime * 25f);
+                bone.rotation = Quaternion.Slerp(bone.rotation, targetRotation, Time.deltaTime * 15f);
             }
         }
     }
