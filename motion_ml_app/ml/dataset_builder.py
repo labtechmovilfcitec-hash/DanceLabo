@@ -4,9 +4,12 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
+# Ruta absoluta a data/sequences, independiente del directorio de trabajo
+_DEFAULT_SEQUENCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "sequences")
+
 class MotionDataset(Dataset):
-    def __init__(self, data_dir="data/sequences"):
-        self.data_dir = data_dir
+    def __init__(self, data_dir=None):
+        self.data_dir = os.path.abspath(data_dir if data_dir else _DEFAULT_SEQUENCES_DIR)
         self.sequences = []
         self.labels = []
         self.label_map = {}
