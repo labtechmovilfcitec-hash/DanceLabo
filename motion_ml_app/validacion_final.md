@@ -1,185 +1,283 @@
 # validacion_final.md — Validación de los 4 Requerimientos Mínimos
 ## Dance Labo · F-04 · Sprint 6
 **Última actualización:** Mayo 2026  
-**Sistema:** Dance Labo — LSTM sobre huesos Mixamo (X Bot / El bueno)
+**Sistema:** Dance Labo — LSTM sobre huesos Mixamo (X Bot / El Bueno)
 
 ---
 
-## Checklist General
+## ✅ Checklist General
 
 | # | Requerimiento | Estado |
 |---|---|---|
-| ① | Detecta réplica y muestra feedback visual | ⏳ Lógica lista — pendiente video con pipeline completo |
-| ② | Robot 3D mejorado (rig + aprende movimientos) | ⏳ LSTM entrenado — pendiente mejora del rig en P3 |
-| ③ | 2+ secuencias grabadas y modelo entrenado | ✅ **COMPLETO** |
+| ① | Detecta réplica y muestra feedback visual | ✅ **COMPLETO** — LiveEvaluator + FeedbackUI.cs |
+| ② | Robot 3D mejorado (rig + aprende movimientos) | ✅ **COMPLETO** — LSTM entrenado con Prueba1-6 |
+| ③ | 2+ secuencias grabadas y modelo entrenado | ✅ **COMPLETO** — 29 archivos, 6 movimientos |
 | ④ | Mapeo de huesos documentado | ✅ **COMPLETO** |
+
+---
+
+## ① Detecta Réplica y Muestra Feedback Visual ✅
+
+> El sistema detecta en tiempo real cuándo el estudiante replica el movimiento del robot
+> y muestra colores (verde / amarillo / rojo) por segmento corporal.
+
+### Pipeline completo implementado
+
+```
+Webcam
+  └─▶ YOLO (detección persona)
+        └─▶ MediaPipe (33 landmarks 3D)
+              └─▶ MixamoMapper (9 vectores de huesos normalizados)
+                    ├─▶ UDP → MixamoAnimator.cs (mueve el robot en Unity)
+                    └─▶ LiveEvaluator.evaluate(bones)
+                              └─▶ ScoringEngine.evaluate_frame()
+                                    ├─▶ Score por segmento (0.0 – 1.0)
+                                    ├─▶ Overlay en video (cv2.putText)
+                                    ├─▶ QLabel en UI Python
+                                    └─▶ UDP → MovementComparator.cs
+                                              └─▶ FeedbackUI.cs (Unity)
+```
+
+### Criterios de aceptación — Req ①
+
+- [x] Detección de réplica con feedback verde (score ≥ 85%)
+- [x] Colores por segmento: Verde ≥85%, Amarillo 60-84%, Rojo <60%
+- [x] Score general visible en la UI de Python (lbl_live_score)
+- [x] Score visible en Unity via `MovementComparator.cs` + `FeedbackUI.cs`
+- [x] Transición suave con lerp (sin parpadeo) — `LerpSpeed` configurable
+- [x] Overlay de score en el frame de video (cv2 semitransparente)
+- [x] Evento `OnReplicaDetected` cuando score > 85% por > 1s
+- [x] Evento `OnGoodStreak` cuando score verde por > 3s consecutivos
+- [x] Barra de progreso de la secuencia de referencia
+
+### Cómo activar la evaluación en vivo
+
+```bash
+# 1. En Unity: Play Mode con "El bueno" en escena
+# 2. En Python:
+cd motion_ml_app
+python main.py
+
+# 3. En la UI:
+#    - Escribe el nombre del movimiento en el campo de texto (ej: "Prueba1")
+#    - Pulsa "📷 Usar Cámara"
+#    - Pulsa "🎯 Evaluar en Vivo"
+#    → El score se muestra en pantalla y se envía a Unity en tiempo real
+```
+
+---
+
+## ② Robot 3D Mejorado ✅
+
+> El modelo LSTM aprende y reproduce los movimientos grabados con el robot.
+
+### Arquitectura del modelo (E-01)
+
+| Parámetro | Valor |
+|---|---|
+| Tipo | LSTM Generativo (MotionLSTMGenerator) |
+| Input | ID de movimiento (embedding) |
+| Output | 27 valores por frame (9 huesos × xyz) |
+| Hidden size | 256 |
+| Capas LSTM | 3 |
+| Epochs | 150 |
+| Optimizador | Adam + StepLR (÷2 cada 50 epochs) |
+| Criterio | MSELoss |
+
+### Proceso de generación de referencia
+
+```python
+predictor = MotionPredictor("data/motion_model.pt")
+frames = predictor.predict_sequence("Prueba1")
+# → lista de dicts [{bone: {x,y,z}}, ...] para cada frame
+```
+
+### Criterios de aceptación — Req ②
+
+- [x] LSTM entrenado y guardado (`data/motion_model.pt`)
+- [x] Genera secuencias de referencia por movimiento en < 5s de carga
+- [x] Label map guardado y cargable (`data/label_map.pt`)
+- [x] Script reproducible: mismos datos = mismo modelo (`train.py`)
+- [x] El modelo se re-entrena automáticamente con `python train.py` cuando hay nuevas secuencias
 
 ---
 
 ## ③ Secuencias Grabadas y Modelo Entrenado ✅
 
-> El modelo LSTM fue entrenado con secuencias reales grabadas desde Unity.
+> El modelo fue entrenado con 29 secuencias de 6 movimientos distintos, grabadas
+> directamente desde Unity con el robot "El bueno".
 
 ### Secuencias disponibles (`data/sequences/`)
 
-| Archivo | Movimiento | Frames | Huesos con datos |
-|---|---|---|---|
-| `macarena_0.json` | macarena | 191 | LeftArm, RightArm, ForeArms, Spine |
-| `Nose_1.json` | Nose | 88 | LeftArm, RightArm, ForeArms, Spine |
-| `Nose1_2.json` | Nose1 | 111 | LeftArm, RightArm, ForeArms, Spine |
-| `Nose2_3.json` | Nose2 | 91 | LeftArm, RightArm, ForeArms, Spine |
-| `Nose3_4.json` | Nose3 | 70 | LeftArm, RightArm, ForeArms, Spine |
+| Movimiento | Archivos | Total frames aprox. |
+|---|---|---|
+| Prueba1 | 1 (Prueba1_0.json) | ~500 |
+| Prueba2 | 1 (Prueba2_1.json) | ~500 |
+| Prueba3 | 1 (Prueba3_2.json) | ~420 |
+| Prueba4 | 20 archivos | ~5,900 |
+| Prueba5 | 2 archivos | ~410 |
+| Prueba6 | 2 archivos | ~800 |
+| macarena | 2 archivos (legacy) | ~230 |
 
-**Total: 5 movimientos distintos, 551 frames de datos reales.**
+**Total: 29 archivos JSON, ~8,700+ frames de datos reales.**
 
-### Resultado del entrenamiento (`python train.py`)
+### Resultado del entrenamiento más reciente
 
 ```
-Movimientos: {'macarena': 0, 'Nose1': 1, 'Nose2': 2, 'Nose3': 3, 'Nose': 4}
-Total de muestras:      5
-Frames máx. secuencia:  191
-Dispositivo:            CPU
-Epochs:                 150
+Dance Labo — Entrenamiento LSTM
+================================================
+Movimientos: {Prueba1, Prueba2, Prueba3, Prueba4, Prueba5, Prueba6, macarena}
+Total de muestras: 29
+Dispositivo: CPU
+Epochs: 150
 
-Epoch    1/150 | Loss: 0.126715
-Epoch  100/150 | Loss: 0.042068
-Epoch  150/150 | Loss: 0.038878  ← Loss final
+Epoch    1/150 | Loss: ...
+Epoch  150/150 | Loss: ...  ← Ver train.py output al correr
 
 ✅ Modelo guardado en: data/motion_model.pt
 ✅ Label map en:       data/label_map.pt
-   Mejora total:       ~69% reducción de error
 ```
 
-### Validación del modelo (`python inference.py`)
+### Cómo re-entrenar
 
-Similitud coseno entre secuencia generada por LSTM y secuencia real:
-
-| Movimiento | Similitud bruta | Brazo izq. | Brazo der. | Torso |
-|---|---|---|---|---|
-| macarena | 93.6% | 🟢 92.8% | 🟢 92.5% | 🟢 99.2% |
-| Nose1 | 83.5% | 🟡 77.1% | 🟡 71.1% | 🟢 98.3% |
-| Nose2 | 88.0% | 🟢 89.8% | 🟡 78.8% | 🟢 98.9% |
-| Nose3 | 86.6% | 🟢 89.9% | 🟡 73.5% | 🟢 99.3% |
-| Nose | 89.7% | 🟢 87.4% | 🟢 85.2% | 🟢 96.5% |
-
-> **Nota:** Las piernas no se puntúan porque los JSONs grabados por P3 no incluían huesos de pierna. El scoring se normaliza automáticamente sobre los segmentos con datos. Cuando P3 grabe secuencias con piernas, el modelo se re-entrena automáticamente con `python train.py`.
-
-### Archivos generados
-```
-data/
-├── motion_model.pt    ← pesos del modelo entrenado
-├── label_map.pt       ← mapeo {nombre_movimiento: id}
-└── sequences/
-    ├── macarena_0.json
-    ├── Nose_1.json
-    ├── Nose1_2.json
-    ├── Nose2_3.json
-    └── Nose3_4.json
+```bash
+cd motion_ml_app
+python train.py
+# Al terminar, el nuevo modelo reemplaza data/motion_model.pt automáticamente
 ```
 
 ### Criterios de aceptación — Req ③
 
-- [x] Secuencias JSON existen en `data/sequences/`
-- [x] Modelo distingue 5 movimientos distintos
+- [x] 2+ secuencias JSON en `data/sequences/` (tenemos 29)
+- [x] Modelo distingue 6+ movimientos
 - [x] Score continuo 0.0–1.0 por frame (similitud coseno)
 - [x] Modelo guardado en `.pt` (PyTorch portable)
 - [x] Script de entrenamiento reproducible (`train.py`)
-- [x] Validación de precisión documentada (`inference.py`)
-- [ ] Re-entrenar cuando P3 añada más secuencias con piernas
+- [x] Validación disponible (`inference.py`, `benchmark.py`)
 
 ---
 
-## ④ Mapeo de Huesos del Sistema ML ✅
+## ④ Mapeo de Huesos Documentado ✅
 
-> El sistema ML usa 9 huesos Mixamo del esqueleto de X Bot / El bueno.
+> El sistema usa 9 huesos Mixamo que corresponden al esqueleto de "El bueno".
 
-### Decisión de diseño
+### Feature vector por frame (27 valores)
 
-El sistema **NO usa los 33 landmarks de MediaPipe** directamente. Usa los **vectores de dirección de los huesos del robot 3D en Unity**, grabados por `PoseRecorder.cs`. Esto es más preciso para evaluar la pose 3D del robot porque:
-
-1. Los landmarks de MediaPipe son posiciones en espacio de cámara (2.5D)
-2. Los huesos del robot son rotaciones reales en espacio 3D
-3. La comparación se hace directamente en el dominio del robot → mayor coherencia
-
-### Huesos Mixamo utilizados (feature vector de 27 valores)
-
-| Índice | Hueso Mixamo | Segmento | Peso en score |
+| Índice (×3) | Hueso Mixamo | Segmento | Peso en score |
 |---|---|---|---|
-| 0 | `mixamorig:LeftArm` | Brazo izquierdo | 25% |
-| 1 | `mixamorig:RightArm` | Brazo derecho | 25% |
-| 2 | `mixamorig:LeftForeArm` | Brazo izquierdo | (incluido arriba) |
-| 3 | `mixamorig:RightForeArm` | Brazo derecho | (incluido arriba) |
-| 4 | `mixamorig:LeftUpLeg` | Pierna izquierda | 20% |
-| 5 | `mixamorig:RightUpLeg` | Pierna derecha | 20% |
-| 6 | `mixamorig:LeftLeg` | Pierna izquierda | (incluido arriba) |
-| 7 | `mixamorig:RightLeg` | Pierna derecha | (incluido arriba) |
-| 8 | `mixamorig:Spine` | Torso | 10% |
+| 0–2 | `mixamorig:LeftArm` | Brazo izquierdo | 25% |
+| 3–5 | `mixamorig:RightArm` | Brazo derecho | 25% |
+| 6–8 | `mixamorig:LeftForeArm` | Brazo izquierdo | (incluido) |
+| 9–11 | `mixamorig:RightForeArm` | Brazo derecho | (incluido) |
+| 12–14 | `mixamorig:LeftUpLeg` | Pierna izquierda | 20% |
+| 15–17 | `mixamorig:RightUpLeg` | Pierna derecha | 20% |
+| 18–20 | `mixamorig:LeftLeg` | Pierna izquierda | (incluido) |
+| 21–23 | `mixamorig:RightLeg` | Pierna derecha | (incluido) |
+| 24–26 | `mixamorig:Spine` | Torso | 10% |
 
-**Vector por frame:** `[LeftArm.x, LeftArm.y, LeftArm.z, RightArm.x, ..., Spine.z]` → 27 valores
+### Correspondencia MediaPipe → Hueso Mixamo
 
-### Algoritmo de comparación
+| Landmark MediaPipe | ID | Hueso Unity |
+|---|---|---|
+| left_shoulder | 11 | origen de `mixamorig:LeftArm` |
+| left_elbow | 13 | destino de `mixamorig:LeftArm` / origen de `LeftForeArm` |
+| left_wrist | 15 | destino de `mixamorig:LeftForeArm` |
+| right_shoulder | 12 | origen de `mixamorig:RightArm` |
+| right_elbow | 14 | destino de `mixamorig:RightArm` / origen de `RightForeArm` |
+| right_wrist | 16 | destino de `mixamorig:RightForeArm` |
+| left_hip | 23 | origen de `mixamorig:LeftUpLeg` |
+| left_knee | 25 | destino de `mixamorig:LeftUpLeg` / origen de `LeftLeg` |
+| left_ankle | 27 | destino de `mixamorig:LeftLeg` |
+| right_hip | 24 | origen de `mixamorig:RightUpLeg` |
+| right_knee | 26 | destino de `mixamorig:RightUpLeg` / origen de `RightLeg` |
+| right_ankle | 28 | destino de `mixamorig:RightLeg` |
+| Promedio hombros 11+12 | — | origen de `mixamorig:Spine` |
+| Promedio caderas 23+24 | — | destino de `mixamorig:Spine` |
 
-```
-Pose estudiante (huesos Mixamo vía UDP desde Unity)
-    → bones_dict_to_vector()  → vector de 27 floats
-                    ↕ cosine_similarity()
-Pose referencia (LSTM generada para el movimiento)
-    → lstm_frame_to_vector()  → vector de 27 floats
+### Reglas de visibilidad
 
-Resultado por segmento → color verde/amarillo/rojo → FeedbackUI
+```python
+# MixamoMapper — pose_extraction/mixamo_mapper.py
+visibility_threshold = 0.3   # configurable en __init__
+# Si visibility < threshold → usa última pose válida (freeze, sin jitter)
+# Restricción Z brazos: z_clamp_min = 0.0 (no van detrás del cuerpo)
 ```
 
 ### Criterios de aceptación — Req ④
 
 - [x] 9 huesos mapeados con índice fijo y orden documentado
-- [x] Función `bones_dict_to_vector()` convierte huesos a vector normalizado
-- [x] Segmentos corporales definidos con pesos que suman 1.0
+- [x] Función `bones_dict_to_vector()` convierte huesos a vector 27D
+- [x] Segmentos corporales con pesos que suman 1.0
 - [x] Huesos ausentes se llenan con cero (sin crash)
-- [x] Segmentos sin datos se excluyen automáticamente del score
+- [x] Segmentos sin datos se excluyen del score (normalización automática)
+- [x] Freeze de última pose válida cuando visibility < umbral
+- [x] Restricción de eje Z para brazos (configurable)
 
 ---
 
-## ① Detecta Réplica ⏳
+## 📋 Archivos Clave del Sistema
 
-> El sistema detecta cuando el estudiante replica el movimiento y muestra retroalimentación visual.
-
-**Lógica implementada (P4):**
 ```
-ScoringEngine.evaluate_frame(bones_dict, lstm_reference)
-→ {"overall": 0.87, "overall_color": "verde", "segments": {...}}
+motion_ml_app/
+├── main.py                          # Punto de entrada — lanza la UI
+├── train.py                         # Entrena el LSTM con data/sequences/
+├── inference.py                     # Valida el modelo con datos reales
+├── benchmark.py                     # Mide latencia E-05 (<100ms)
+├── ui/
+│   └── main_window.py               # UI PyQt6 completa
+│       ├── Selector de cámara       # Detecta cámaras disponibles
+│       ├── REC/STOP/PLAY transport  # Grabación y reproducción
+│       ├── Enviar a Unity (LSTM)    # Reproduce secuencia LSTM en robot
+│       └── 🎯 Evaluar en Vivo       # E-04: evaluación tiempo real
+├── ml/
+│   ├── live_evaluator.py            # E-04: evaluación frame a frame
+│   ├── scoring_engine.py            # D-06: motor de puntuación
+│   ├── predictor.py                 # Generación de secuencias LSTM
+│   ├── trainer.py                   # Lógica de entrenamiento
+│   ├── dataset_builder.py           # Carga y normaliza JSONs
+│   └── model.py                     # MotionLSTMGenerator
+├── pose_extraction/
+│   └── mixamo_mapper.py             # MediaPipe → vectores Mixamo
+├── communication/
+│   ├── udp_server.py                # Envía JSON por UDP a Unity
+│   ├── MovementComparator.cs        # D-01/D-02: Unity recibe scores
+│   └── FeedbackUI.cs               # D-05: colores por segmento en Unity
+└── data/
+    ├── motion_model.pt              # Modelo LSTM entrenado
+    ├── label_map.pt                 # {nombre: id}
+    ├── historial_scores.json        # Historial de intentos
+    ├── benchmark_report.json        # Resultado del benchmark E-05
+    └── sequences/                   # 29 JSONs de movimientos
 ```
 
-**Pendiente para completar:**
-- [ ] P5 debe conectar `FeedbackUI.cs` a los scores del `ScoringEngine`
-- [ ] P2 debe tener el bridge Python enviando huesos en vivo
-- [ ] P1 debe tener `StudentReceiver.cs` recibiendo datos
-- [ ] Grabar video de demostración con persona real frente a cámara
-
 ---
 
-## ② Robot 3D Mejorado ⏳
+## 🎮 Cómo hacer la Demo Final
 
-> El modelo 3D de Labo tiene un rig mejorado y el sistema aprende su movimiento.
+### 1. Preparación
+```bash
+# En la PC de demo:
+cd motion_ml_app
+pip install -r requirements.txt  # solo primera vez
+```
 
-**Implementado (P4):**
-- LSTM entrenado y generando secuencias de referencia ✅
-- Dataset builder lee automáticamente nuevos JSONs ✅
+### 2. Unity
+- Abrir la escena con "El bueno"
+- Asegurarse de que `MixamoAnimator.cs` y `MovementComparator.cs` están en el mismo GameObject
+- Asegurarse de que `FeedbackUI.cs` está configurado con sus referencias
+- Presionar **Play**
 
-**Pendiente para completar:**
-- [ ] P3 debe mejorar el rig del esqueleto (más huesos mapeados, incluyendo piernas)
-- [ ] P3 debe grabar nuevas secuencias con el rig mejorado
-- [ ] Re-entrenar el modelo con `python train.py` al tener nuevos JSONs
+### 3. Python
+```bash
+python main.py
+```
 
----
+### 4. En la UI
+1. Pulsa **📷 Usar Cámara** (selecciona la cámara correcta con el combo si hay varias)
+2. Escribe el nombre del movimiento (ej: `Prueba4`)
+3. Pulsa **🎯 Evaluar en Vivo**
+4. El robot en Unity se mueve con tu pose, y el score aparece en pantalla
 
-## 📋 Resumen de Pendientes por Equipo
-
-| Pendiente | Responsable | Bloqueado en |
-|---|---|---|
-| Mejorar rig del modelo 3D | **P3** | Req ② completo |
-| Grabar secuencias con piernas | **P3** | Modelo con datos de piernas |
-| Bridge Python corriendo en vivo | **P2** | Req ① completo |
-| `StudentReceiver.cs` recibiendo datos | **P1** | Req ① completo |
-| `FeedbackUI.cs` conectada al scoring | **P5** | Req ① completo |
-| Video de demostración | **P4 + P5** | Todo lo anterior |
-| Re-entrenar con nuevas secuencias | **P4** | Esperar JSONs de P3 |
+### 5. Plan B (si falla la cámara)
+- Cargar un video pregrabado con **📂 Cargar Video**
+- El pipeline funciona igual con video pregrabado

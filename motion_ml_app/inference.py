@@ -8,9 +8,13 @@ Uso:
 """
 
 import os
+import sys
 import json
 import torch
 import numpy as np
+
+# Forzar UTF-8 en stdout para que los emojis funcionen en Windows
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from ml.model import MotionLSTMGenerator
 from ml.scoring_engine import (
@@ -19,23 +23,30 @@ from ml.scoring_engine import (
     EXPECTED_BONES
 )
 
-MODEL_PATH = "data/motion_model.pt"
-LABEL_PATH = "data/label_map.pt"
-SEQ_DIR    = "data/sequences"
+MODEL_PATH   = "data/motion_model.pt"
+LABEL_PATH   = "data/label_map.pt"
+SEQ_DIR      = "data/sequences"
+HIDDEN_SIZE  = 256
+NUM_LAYERS   = 3
 
 
 def load_model():
     if not os.path.exists(MODEL_PATH):
-        print(f"[ERROR] No se encontró el modelo en '{MODEL_PATH}'")
+        print(f"[ERROR] No se encontro el modelo en '{MODEL_PATH}'")
         print("  Ejecuta primero: python train.py")
         return None, None
 
-    label_map   = torch.load(LABEL_PATH)
-    model       = MotionLSTMGenerator(num_classes=len(label_map), output_size=27)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
+    label_map = torch.load(LABEL_PATH, weights_only=True)
+    model = MotionLSTMGenerator(
+        num_classes=len(label_map),
+        hidden_size=HIDDEN_SIZE,
+        num_layers=NUM_LAYERS,
+        output_size=27,
+    )
+    model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu", weights_only=True))
     model.eval()
 
-    print(f"✅ Modelo cargado — movimientos conocidos:")
+    print("\u2705 Modelo cargado — movimientos conocidos:")
     for name, idx in label_map.items():
         print(f"   [{idx}] {name}")
     return model, label_map
