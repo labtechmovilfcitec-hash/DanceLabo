@@ -131,6 +131,7 @@ def make_btn(text, color, min_h=44):
 
 class MainWindow(QMainWindow):
     training_finished_signal = pyqtSignal(str)
+    camera_scan_signal       = pyqtSignal(str)  # "0,1,2" — índices de cámaras disponibles
 
     def __init__(self, udp_server=None):
         super().__init__()
@@ -157,6 +158,9 @@ class MainWindow(QMainWindow):
         self.yolo_frame_count = 0
         self.last_yolo_box = None
         self.is_playing_back = False
+        self.selected_camera_index = 0   # Índice de la cámara activa
+        self.live_eval_active = False    # Modo evaluación en tiempo real
+        self.live_evaluator = None       # Instancia de LiveEvaluator
 
         # Timer para tiempo transcurrido
         self._elapsed_seconds = 0
@@ -170,6 +174,8 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
         self.training_finished_signal.connect(self.on_training_finished)
+        self.camera_scan_signal.connect(self._update_camera_list)
+        self._refresh_cameras()          # Detectar cámaras disponibles al arrancar
 
     # ------------------------------------------------------------------
     # UI
@@ -211,6 +217,43 @@ class MainWindow(QMainWindow):
         src_row.addWidget(self.btn_load)
         src_row.addWidget(self.btn_camera)
         left.addLayout(src_row)
+
+        # ── Selector de cámara ────────────────────────────────────────
+        cam_row = QHBoxLayout()
+        cam_row.setSpacing(6)
+        cam_lbl = QLabel("Cámara:")
+        cam_lbl.setStyleSheet(f"color:{TEXT_MUTED}; font-size:12px; min-width:55px;")
+        self.combo_camera = QComboBox()
+        self.combo_camera.setFixedHeight(34)
+        self.combo_camera.setToolTip(
+            "Selecciona la cámara a usar.\n"
+            "Si tienes webcam integrada y una externa, aparecerán aquí.\n"
+            "Pulsa 🔄 para volver a detectar cámaras."
+        )
+        self.combo_camera.currentIndexChanged.connect(self._on_camera_selected)
+        btn_scan = QPushButton("🔄")
+        btn_scan.setFixedSize(34, 34)
+        btn_scan.setToolTip("Volver a detectar cámaras disponibles")
+        btn_scan.setStyleSheet(f"""QPushButton {{
+            background:{CARD_BG}; border:1px solid {BORDER};
+            border-radius:6px; color:{ACCENT_LIGHT}; font-size:15px;
+        }} QPushButton:hover {{ background:{ACCENT}; color:white; }}""")
+        btn_scan.clicked.connect(self._refresh_cameras)
+        cam_row.addWidget(cam_lbl)
+        cam_row.addWidget(self.combo_camera, stretch=1)
+        cam_row.addWidget(btn_scan)
+        left.addLayout(cam_row)
+
+        # ── Etiqueta de score en vivo (oculta hasta activar evaluación) ─
+        self.lbl_live_score = QLabel("")
+        self.lbl_live_score.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_live_score.setFixedHeight(44)
+        self.lbl_live_score.setVisible(False)
+        self.lbl_live_score.setStyleSheet(
+            "font-size:18px; font-weight:bold; color:#2ecc71;"
+            " background:rgba(0,0,0,0.55); border-radius:8px; padding:4px 14px;"
+        )
+        left.addWidget(self.lbl_live_score)
 
         # ── Columna derecha: controles ─────────────────────────────────
         right = QVBoxLayout()
@@ -340,6 +383,19 @@ class MainWindow(QMainWindow):
         ml_lay.addWidget(self.btn_train)
         ml_lay.addWidget(self.btn_play_unity)
         ml_lay.addWidget(self.btn_play_raw)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color:{BORDER}; margin:4px 0;")
+        ml_lay.addWidget(sep)
+
+        self.btn_live_eval = make_btn("🎯  Evaluar en Vivo", "#5a1a8a")
+        self.btn_live_eval.setToolTip(
+            "Activa evaluación en tiempo real.\n"
+            "Compara tu pose (cámara) contra la referencia LSTM del movimiento elegido."
+        )
+        self.btn_live_eval.clicked.connect(self._toggle_live_eval)
+        ml_lay.addWidget(self.btn_live_eval)
 
         right.addWidget(ml_group)
 
@@ -472,7 +528,21 @@ class MainWindow(QMainWindow):
             print(f"[Error entrenamiento]\n{traceback.format_exc()}")
             self.training_finished_signal.emit(f"❌ Error: {e}")
 
-    def on_training_finished(self, msg):
+    def on_training_finished(self, msg: str):
+        # Mensaje interno: evaluación en vivo lista
+        if msg.startswith("__live_eval_on__:"):
+            name = msg.split(":", 1)[1]
+            self.btn_live_eval.setText("⏹  Detener Evaluación")
+            self.btn_live_eval.setEnabled(True)
+            self.lbl_live_score.setVisible(True)
+            self.lbl_record_status.setText(
+                f"🎯 Evaluando '{name}' en vivo — muévete frente a la cámara."
+            )
+            # Asegurarse de que la cámara está activa
+            if not (self.video_capture and self.video_capture.isOpened()):
+                self.use_camera()
+            return
+
         self.lbl_record_status.setText(msg)
         self.btn_train.setEnabled(True)
         self.btn_play_unity.setEnabled(True)
@@ -584,14 +654,16 @@ class MainWindow(QMainWindow):
     def use_camera(self):
         if self.video_capture:
             self.video_capture.release()
-        self.video_capture = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        idx = self.selected_camera_index
+        self.video_capture = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.video_capture.isOpened():
-            self.video_capture = cv2.VideoCapture(0)
+            self.video_capture = cv2.VideoCapture(idx)
             self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.video_capture.isOpened():
-            self.lbl_record_status.setText("❌ No se detectó cámara web.")
+            self.lbl_record_status.setText(f"❌ No se pudo abrir la cámara {idx}.")
             return
+        self.lbl_record_status.setText(f"📷 Usando cámara {idx}.")
         self.is_camera = True
         self.play_video()
 
@@ -641,6 +713,9 @@ class MainWindow(QMainWindow):
                     self.lbl_record_status.setText(
                         f"Grabando... ({len(self.recorded_frames)} frames)"
                     )
+                # Evaluación en vivo — compara frame a frame contra referencia LSTM
+                if self.live_eval_active and self.live_evaluator and bone_vectors:
+                    self._run_live_eval_frame(bone_vectors, frame)
         frame_rgb_display = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb_display.shape
         q_img = QImage(frame_rgb_display.data, w, h, ch * w, QImage.Format.Format_RGB888)
@@ -651,7 +726,191 @@ class MainWindow(QMainWindow):
             )
         )
 
+    # ------------------------------------------------------------------
+    # Selector de cámara — detección automática
+    # ------------------------------------------------------------------
+
+    def _refresh_cameras(self):
+        """Detecta cámaras disponibles en un hilo separado para no bloquear la UI."""
+        self.lbl_record_status.setText("🔍 Detectando cámaras...")
+        t = threading.Thread(target=self._do_scan_cameras, daemon=True)
+        t.start()
+
+    def _do_scan_cameras(self):
+        """Hilo: prueba índices 0-5 con DirectShow; fallback sin backend si falla."""
+        available = []
+        for i in range(6):
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                available.append(i)
+                cap.release()
+        if not available:
+            # Fallback sin DirectShow (Linux / Mac / cámaras virtuales)
+            for i in range(4):
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    available.append(i)
+                    cap.release()
+        result = ",".join(str(c) for c in available) if available else "none"
+        self.camera_scan_signal.emit(result)
+
+    def _update_camera_list(self, cameras_str: str):
+        """Actualiza el combo de cámaras (siempre en el hilo principal vía signal)."""
+        self.combo_camera.blockSignals(True)
+        self.combo_camera.clear()
+        if cameras_str == "none":
+            self.combo_camera.addItem("❌ Sin cámaras detectadas", userData=None)
+            self.lbl_record_status.setText("❌ No se detectó ninguna cámara.")
+        else:
+            indices = [int(c) for c in cameras_str.split(",") if c.isdigit()]
+            for idx in indices:
+                self.combo_camera.addItem(f"📷 Cámara {idx}", userData=idx)
+            # Restaurar la selección anterior si todavía existe
+            for i in range(self.combo_camera.count()):
+                if self.combo_camera.itemData(i) == self.selected_camera_index:
+                    self.combo_camera.setCurrentIndex(i)
+                    break
+            n = len(indices)
+            self.lbl_record_status.setText(
+                f"✅ {n} cámara{'s' if n != 1 else ''} detectada{'s' if n != 1 else ''}."
+            )
+        self.combo_camera.blockSignals(False)
+
+    def _on_camera_selected(self, index: int):
+        """Cambia la cámara activa cuando el usuario elige una diferente en el combo."""
+        data = self.combo_camera.itemData(index)
+        if data is None:
+            return
+        prev = self.selected_camera_index
+        self.selected_camera_index = data
+        # Si la cámara ya está corriendo, cambiarla en vivo
+        if self.is_camera and self.timer.isActive() and prev != data:
+            self.use_camera()
+
+    # ------------------------------------------------------------------
+    # Evaluación en vivo (E-04)
+    # ------------------------------------------------------------------
+
+    def _toggle_live_eval(self):
+        """Alterna entre activar y detener la evaluación en tiempo real."""
+        if self.live_eval_active:
+            self._stop_live_eval()
+        else:
+            self._start_live_eval()
+
+    def _start_live_eval(self):
+        name = self.txt_dance_name.text().strip()
+        if not name:
+            self.lbl_record_status.setText("⚠ Escribe el nombre del movimiento a evaluar.")
+            return
+        self.btn_live_eval.setEnabled(False)
+        self.lbl_record_status.setText(f"🔄 Cargando referencia '{name}'...")
+        t = threading.Thread(target=self._do_load_live_eval, args=(name,), daemon=True)
+        t.start()
+
+    def _do_load_live_eval(self, name: str):
+        """Hilo: carga el modelo y genera la secuencia de referencia."""
+        try:
+            from ml.live_evaluator import LiveEvaluator
+            evaluator = LiveEvaluator(name)
+            if not evaluator.is_ready:
+                self.training_finished_signal.emit(
+                    f"❌ '{name}' no encontrado. ¿Está el modelo entrenado con este movimiento?"
+                )
+                return
+            self.live_evaluator = evaluator
+            self.live_eval_active = True
+            self.training_finished_signal.emit(f"__live_eval_on__:{name}")
+        except Exception as e:
+            self.training_finished_signal.emit(f"❌ Error iniciando evaluación: {e}")
+
+    def _stop_live_eval(self):
+        self.live_eval_active = False
+        self.live_evaluator   = None
+        self.lbl_live_score.setVisible(False)
+        self.btn_live_eval.setText("🎯  Evaluar en Vivo")
+        self.btn_live_eval.setEnabled(True)
+        self.btn_live_eval.setStyleSheet(
+            self.btn_live_eval.styleSheet()
+        )
+        self.lbl_record_status.setText("Evaluación en vivo detenida.")
+
+    def _run_live_eval_frame(self, bone_vectors: dict, frame):
+        """Evalúa un frame y dibuja el score sobre la imagen de OpenCV."""
+        result = self.live_evaluator.evaluate(bone_vectors)
+        if not result:
+            return
+
+        overall    = result.get("overall", 0.0)
+        color_name = result.get("overall_color", "rojo")
+        pct        = int(overall * 100)
+
+        # Colores BGR para cv2
+        cv_colors = {"verde": (0, 220, 80), "amarillo": (0, 200, 255), "rojo": (50, 50, 230)}
+        qt_colors = {"verde": "#2ecc71",    "amarillo": "#f39c12",     "rojo": "#e74c3c"}
+        cv_color  = cv_colors.get(color_name, (255, 255, 255))
+        qt_color  = qt_colors.get(color_name, "#ffffff")
+
+        # Fondo semitransparente + score principal
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (8, 8), (270, 48), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+        cv2.putText(frame, f"Score: {pct}%  [{color_name.upper()}]",
+                    (14, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.82, cv_color, 2)
+
+        # Score por segmento (mini labels)
+        seg_labels = {
+            "brazo_izquierdo":  "Brazo Izq",
+            "brazo_derecho":    "Brazo Der",
+            "pierna_izquierda": "Pierna Izq",
+            "pierna_derecha":   "Pierna Der",
+            "torso":            "Torso",
+        }
+        seg_cv_colors = {"verde": (0,220,80), "amarillo": (0,200,255), "rojo": (50,50,230)}
+        segments = result.get("segments", {})
+        colors   = result.get("colors", {})
+        y = 64
+        for seg, val in segments.items():
+            if val is None:
+                continue
+            sc = seg_cv_colors.get(colors.get(seg, "rojo"), (180, 180, 180))
+            cv2.putText(frame,
+                        f"{seg_labels.get(seg, seg)}: {int(val * 100)}%",
+                        (14, y), cv2.FONT_HERSHEY_SIMPLEX, 0.46, sc, 1)
+            y += 18
+
+        # Barra de progreso de la secuencia
+        progress = self.live_evaluator.get_progress_pct()
+        bar_w = int(250 * progress)
+        cv2.rectangle(frame, (14, y + 4), (264, y + 12), (50, 50, 60), -1)
+        cv2.rectangle(frame, (14, y + 4), (14 + bar_w, y + 12), cv_color, -1)
+
+        # Actualizar QLabel de score (ya estamos en el hilo del QTimer → hilo principal)
+        self.lbl_live_score.setText(f"🎯  Score en vivo: {pct}%")
+        self.lbl_live_score.setStyleSheet(
+            f"font-size:18px; font-weight:bold; color:{qt_color};"
+            f" background:rgba(0,0,0,0.55); border-radius:8px; padding:4px 14px;"
+        )
+
+        # Enviar score a Unity por UDP (para MovementComparator.cs → FeedbackUI.cs)
+        # Los campos __score_*__ son ignorados por MixamoAnimator y leídos por MovementComparator
+        if self.udp_server:
+            score_packet = {
+                "__score_overall__":       round(overall, 4),
+                "__score_brazo_izquierdo__": round(segments.get("brazo_izquierdo")  or 0.0, 4),
+                "__score_brazo_derecho__":   round(segments.get("brazo_derecho")    or 0.0, 4),
+                "__score_pierna_izquierda__":round(segments.get("pierna_izquierda") or 0.0, 4),
+                "__score_pierna_derecha__":  round(segments.get("pierna_derecha")   or 0.0, 4),
+                "__score_torso__":           round(segments.get("torso")            or 0.0, 4),
+            }
+            self.udp_server.send_pose(score_packet)
+
+    # ------------------------------------------------------------------
+    # Cierre de ventana
+    # ------------------------------------------------------------------
+
     def closeEvent(self, event):
+        self._stop_live_eval()
         if self.video_capture:
             self.video_capture.release()
         if self.udp_server:

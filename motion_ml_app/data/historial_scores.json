@@ -1,67 +1,67 @@
 [
     {
-        "fecha": "2026-05-13T13:15:03.284838",
+        "fecha": "2026-05-13T12:10:37.786558",
         "movement": "macarena",
-        "score_pct": 58.4,
+        "score_pct": 59.6,
         "label": "Sigue practicando",
         "desglose": {
-            "brazo_izquierdo": 89.3,
-            "brazo_derecho": 90.4,
-            "pierna_izquierda": 0.6,
-            "pierna_derecha": 17.2,
-            "torso": 99.0
+            "brazo_izquierdo": 92.8,
+            "brazo_derecho": 92.5,
+            "pierna_izquierda": 0.4,
+            "pierna_derecha": 16.6,
+            "torso": 99.2
         }
     },
     {
-        "fecha": "2026-05-13T13:15:03.313614",
-        "movement": "Prueba1",
-        "score_pct": 94.8,
-        "label": "Excelente",
+        "fecha": "2026-05-13T12:10:37.839872",
+        "movement": "Nose1",
+        "score_pct": 53.1,
+        "label": "Sigue practicando",
         "desglose": {
-            "brazo_izquierdo": 93.0,
-            "brazo_derecho": 92.1,
-            "pierna_izquierda": 98.2,
-            "pierna_derecha": 98.3,
-            "torso": 92.0
+            "brazo_izquierdo": 77.1,
+            "brazo_derecho": 71.1,
+            "pierna_izquierda": 9.2,
+            "pierna_derecha": 21.7,
+            "torso": 98.3
         }
     },
     {
-        "fecha": "2026-05-13T13:15:03.345255",
-        "movement": "Prueba2",
-        "score_pct": 95.9,
-        "label": "Excelente",
+        "fecha": "2026-05-13T12:10:37.898323",
+        "movement": "Nose2",
+        "score_pct": 54.5,
+        "label": "Sigue practicando",
         "desglose": {
-            "brazo_izquierdo": 92.1,
-            "brazo_derecho": 96.7,
-            "pierna_izquierda": 97.5,
-            "pierna_derecha": 98.0,
-            "torso": 96.3
+            "brazo_izquierdo": 89.8,
+            "brazo_derecho": 78.8,
+            "pierna_izquierda": 0.0,
+            "pierna_derecha": 12.1,
+            "torso": 98.9
         }
     },
     {
-        "fecha": "2026-05-13T13:15:03.407150",
-        "movement": "Prueba3",
-        "score_pct": 90.9,
-        "label": "Excelente",
+        "fecha": "2026-05-13T12:10:37.947684",
+        "movement": "Nose3",
+        "score_pct": 53.5,
+        "label": "Sigue practicando",
         "desglose": {
-            "brazo_izquierdo": 81.9,
-            "brazo_derecho": 83.6,
-            "pierna_izquierda": 98.6,
-            "pierna_derecha": 99.1,
-            "torso": 99.4
+            "brazo_izquierdo": 89.9,
+            "brazo_derecho": 73.5,
+            "pierna_izquierda": 0.0,
+            "pierna_derecha": 13.5,
+            "torso": 99.3
         }
     },
     {
-        "fecha": "2026-05-13T13:15:03.441768",
-        "movement": "Prueba4",
-        "score_pct": 96.3,
-        "label": "Excelente",
+        "fecha": "2026-05-13T12:10:37.999347",
+        "movement": "Nose",
+        "score_pct": 57.6,
+        "label": "Sigue practicando",
         "desglose": {
-            "brazo_izquierdo": 94.7,
-            "brazo_derecho": 92.7,
-            "pierna_izquierda": 98.7,
-            "pierna_derecha": 98.9,
-            "torso": 99.1
+            "brazo_izquierdo": 87.4,
+            "brazo_derecho": 85.2,
+            "pierna_izquierda": 7.2,
+            "pierna_derecha": 16.6,
+            "torso": 96.5
         }
     }
 ]
