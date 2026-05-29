@@ -463,9 +463,25 @@ class MainWindow(QMainWindow):
 
     def _on_sequence_selected(self, text):
         if text and not text.startswith("—"):
-            # Extraer nombre base sin índice numérico final (ej: Prueba4_10 -> Prueba4)
-            # Pero dejamos el nombre completo para que el usuario elija
-            self.txt_dance_name.setText(text)
+            # Buscar el archivo .json para leer el movement_name real guardado dentro
+            import json
+            fpath = os.path.join(SEQUENCES_DIR, f"{text}.json")
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    movement_name = data.get("movement_name")
+                    if movement_name:
+                        self.txt_dance_name.setText(movement_name)
+                        return
+                except Exception as e:
+                    print(f"Error leyendo movement_name de {text}.json: {e}")
+            
+            # Fallback usando regex por si falla la lectura:
+            # extrae el nombre base quitando el sufijo _[0-9]+ (ej: Prueba2_1 -> Prueba2)
+            import re
+            base = re.sub(r'_\d+$', '', text)
+            self.txt_dance_name.setText(base)
 
     # ------------------------------------------------------------------
     # Grabacion
@@ -590,8 +606,6 @@ class MainWindow(QMainWindow):
             self.training_finished_signal.emit(f"Error LSTM: {e}")
         finally:
             self.is_playing_back = False
-            self.btn_play_unity.setEnabled(True)
-            self._elapsed_timer.stop()
 
     # ------------------------------------------------------------------
     # Reproducción directa JSON
@@ -633,8 +647,6 @@ class MainWindow(QMainWindow):
             self.training_finished_signal.emit(f"Error Exacto: {e}")
         finally:
             self.is_playing_back = False
-            self.btn_play_raw.setEnabled(True)
-            self._elapsed_timer.stop()
 
     # ------------------------------------------------------------------
     # Video / Cámara

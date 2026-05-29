@@ -36,22 +36,25 @@ class MixamoMapper:
         "mixamorig:RightForeArm",
     }
 
-    def __init__(self, enable_z_clamp=True, z_clamp_min=0.0, visibility_threshold=0.3):
+    def __init__(self, enable_z_clamp=True, z_clamp_min=0.0, visibility_threshold=0.3, neck_z_multiplier=0.0):
         """
         Args:
             enable_z_clamp (bool): Activa la restricción de eje Z para brazos.
                                    Impide que los brazos vayan detrás del cuerpo.
             z_clamp_min (float):   Valor mínimo permitido para el componente Z de
                                    un vector de brazo. 0.0 = solo hacia adelante/lateral.
-                                   Un valor negativo pequeño (ej. -0.2) permite un poco
+            un valor negativo pequeño (ej. -0.2) permite un poco
                                    de movimiento hacia atrás si se necesita.
             visibility_threshold (float): Confianza mínima de MediaPipe. Si baja de este
                                           umbral, se usa la última pose válida en lugar
                                           de descartar el dato.
+            neck_z_multiplier (float): Factor de escala para el eje Z del cuello.
+                                       Por defecto 0.0 (ignora profundidad ruidosa de MediaPipe).
         """
         self.enable_z_clamp = enable_z_clamp
         self.z_clamp_min = z_clamp_min
         self.visibility_threshold = visibility_threshold
+        self.neck_z_multiplier = neck_z_multiplier
 
         # Diccionario que guarda el último vector válido por hueso.
         # Usado para "congelar" la pose cuando la visibilidad es baja.
@@ -67,7 +70,7 @@ class MixamoMapper:
         MediaPipe: +X derecha, +Y abajo, +Z atrás (lejos de cámara).
         Unity:     +X derecha, +Y arriba, +Z adelante (hacia la cámara).
         """
-        return np.array([lm['x'], -lm['y'], lm['z']])
+        return np.array([lm['x'], -lm['y'], -lm['z']])
 
     # ------------------------------------------------------------------
     # Restricción de eje
@@ -154,17 +157,56 @@ class MixamoMapper:
             self._last_valid_vectors[bone_name] = bone_vector
 
         # ------------------------------------------------------------------
-        # Espina dorsal (mixamorig:Spine)
+        # Caderas / Hips (mixamorig:Hips)
+        # El hueso "hips" en Unity tiene T-Pose dir apuntando HACIA ARRIBA
+        # (desde mixamorig:Hips hacia mixamorig:Spine), por lo que el vector
+        # enviado debe ser el mismo que spine: desde el centro de caderas
+        # hacia el centro de hombros.
+        # NOTA: No usar cross-product (daba vector lateral que causaba flip de 90°).
+        # ------------------------------------------------------------------
+        hips_spine_ids = [11, 12, 23, 24]
+        if all(idx in landmarks_data for idx in hips_spine_ids):
+            hips_visible = all(
+                landmarks_data[idx].get('v', 1.0) >= self.visibility_threshold
+                for idx in hips_spine_ids
+            )
+            if hips_visible:
+                shoulder_center = self._mp_to_unity_coords({
+                    'x': (landmarks_data[11]['x'] + landmarks_data[12]['x']) / 2,
+                    'y': (landmarks_data[11]['y'] + landmarks_data[12]['y']) / 2,
+                    'z': (landmarks_data[11]['z'] + landmarks_data[12]['z']) / 2,
+                })
+                hip_center = self._mp_to_unity_coords({
+                    'x': (landmarks_data[23]['x'] + landmarks_data[24]['x']) / 2,
+                    'y': (landmarks_data[23]['y'] + landmarks_data[24]['y']) / 2,
+                    'z': (landmarks_data[23]['z'] + landmarks_data[24]['z']) / 2,
+                })
+                hips_dir  = shoulder_center - hip_center
+                hips_norm = np.linalg.norm(hips_dir)
+                if hips_norm > 1e-6:
+                    hips_dir = hips_dir / hips_norm
+                    hips_vec = {
+                        "x": float(hips_dir[0]),
+                        "y": float(hips_dir[1]),
+                        "z": float(hips_dir[2]),
+                    }
+                    vectors["mixamorig:Hips"] = hips_vec
+                    self._last_valid_vectors["mixamorig:Hips"] = hips_vec
+            elif "mixamorig:Hips" in self._last_valid_vectors:
+                vectors["mixamorig:Hips"] = self._last_valid_vectors["mixamorig:Hips"]
+
+        # ------------------------------------------------------------------
+        # Espina dorsal inferior (mixamorig:Spine)
         # Vector desde el centro de las caderas al centro de los hombros
         # ------------------------------------------------------------------
         spine_ids = [11, 12, 23, 24]
         if all(idx in landmarks_data for idx in spine_ids):
-            all_visible = all(
+            spine_visible = all(
                 landmarks_data[idx].get('v', 1.0) >= self.visibility_threshold
                 for idx in spine_ids
             )
 
-            if all_visible:
+            if spine_visible:
                 shoulder_center = self._mp_to_unity_coords({
                     'x': (landmarks_data[11]['x'] + landmarks_data[12]['x']) / 2,
                     'y': (landmarks_data[11]['y'] + landmarks_data[12]['y']) / 2,
@@ -185,12 +227,54 @@ class MixamoMapper:
                         "y": float(spine_dir[1]),
                         "z": float(spine_dir[2]),
                     }
-                    vectors["mixamorig:Spine"] = spine_vec
-                    self._last_valid_vectors["mixamorig:Spine"] = spine_vec
+                    # Spine y Spine1 usan el mismo vector (torso entero)
+                    # Spine1 puede afinarse en el futuro si se tiene mas datos
+                    vectors["mixamorig:Spine"]  = spine_vec
+                    vectors["mixamorig:Spine1"] = spine_vec
+                    self._last_valid_vectors["mixamorig:Spine"]  = spine_vec
+                    self._last_valid_vectors["mixamorig:Spine1"] = spine_vec
 
-            elif "mixamorig:Spine" in self._last_valid_vectors:
+            else:
                 # Freeze espina si hay cache
-                vectors["mixamorig:Spine"] = self._last_valid_vectors["mixamorig:Spine"]
+                for key in ("mixamorig:Spine", "mixamorig:Spine1"):
+                    if key in self._last_valid_vectors:
+                        vectors[key] = self._last_valid_vectors[key]
+
+        # ------------------------------------------------------------------
+        # Cuello / Neck (mixamorig:Neck)
+        # MediaPipe no tiene un landmark de cuello dedicado.
+        # Se estima como vector desde el centro de hombros hacia la nariz (id 0).
+        # NOTA: La profundidad (Z) de landmarks faciales es muy ruidosa en MediaPipe.
+        # Multiplicar Z por un factor pequeno (neckZMultiplier) para suprimir el ruido.
+        # self.neck_z_multiplier is defined in __init__ (defaults to 0.0)
+        neck_ids = [0, 11, 12]
+        if all(idx in landmarks_data for idx in neck_ids):
+            neck_visible = all(
+                landmarks_data[idx].get('v', 1.0) >= self.visibility_threshold
+                for idx in neck_ids
+            )
+            if neck_visible:
+                nose = self._mp_to_unity_coords(landmarks_data[0])
+                sh_c = self._mp_to_unity_coords({
+                    'x': (landmarks_data[11]['x'] + landmarks_data[12]['x']) / 2,
+                    'y': (landmarks_data[11]['y'] + landmarks_data[12]['y']) / 2,
+                    'z': (landmarks_data[11]['z'] + landmarks_data[12]['z']) / 2,
+                })
+                neck_dir  = nose - sh_c
+                # Suprimir Z ruidoso: la profundidad de la nariz en MediaPipe es poco fiable
+                neck_dir[2] *= self.neck_z_multiplier
+                neck_norm = np.linalg.norm(neck_dir)
+                if neck_norm > 1e-6:
+                    neck_dir = neck_dir / neck_norm
+                    neck_vec = {
+                        "x": float(neck_dir[0]),
+                        "y": float(neck_dir[1]),
+                        "z": float(neck_dir[2]),
+                    }
+                    vectors["mixamorig:Neck"] = neck_vec
+                    self._last_valid_vectors["mixamorig:Neck"] = neck_vec
+            elif "mixamorig:Neck" in self._last_valid_vectors:
+                vectors["mixamorig:Neck"] = self._last_valid_vectors["mixamorig:Neck"]
 
         return vectors
 

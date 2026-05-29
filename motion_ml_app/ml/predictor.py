@@ -77,9 +77,15 @@ class MotionPredictor:
             return []
 
         if movement_name not in self.label_map:
-            print(f"[LSTM] Movimiento '{movement_name}' no reconocido. "
-                  f"Disponibles: {list(self.label_map.keys())}")
-            return []
+            # Fallback: quitar sufijo numérico (ej. Prueba2_1 -> Prueba2)
+            import re
+            cleaned_name = re.sub(r'_\d+$', '', movement_name)
+            if cleaned_name in self.label_map:
+                movement_name = cleaned_name
+            else:
+                print(f"[LSTM] Movimiento '{movement_name}' no reconocido. "
+                      f"Disponibles: {list(self.label_map.keys())}")
+                return []
 
         expected_bones = [
             "mixamorig:LeftArm",      "mixamorig:RightArm",
@@ -130,6 +136,10 @@ class MotionPredictor:
         if not os.path.exists(sequences_dir):
             print(f"[Directo] Carpeta no encontrada: '{sequences_dir}'")
             return []
+
+        # Intentar limpiar sufijo numérico (ej. Prueba2_1 -> Prueba2)
+        import re
+        movement_name = re.sub(r'_\d+$', '', movement_name)
 
         # Buscar todos los JSON con el movement_name correcto
         matches = []
