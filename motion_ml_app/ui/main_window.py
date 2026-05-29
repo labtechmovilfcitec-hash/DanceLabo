@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.udp_server = udp_server
         self.setWindowTitle("DanceLabo — Motion Capture Studio")
-        self.setGeometry(100, 100, 1280, 800)
+        self.setGeometry(100, 60, 1100, 720)
         self.setStyleSheet(GLOBAL_STYLE)
 
         # Modelos
@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
             f"background-color:{PANEL_BG}; color:{TEXT_MUTED}; font-size:15px;"
             f" border:2px solid {BORDER}; border-radius:10px;"
         )
-        self.video_label.setMinimumSize(820, 560)
+        self.video_label.setMinimumSize(680, 460)
         left.addWidget(self.video_label, stretch=1)
 
         # Controles de fuente
@@ -416,7 +416,7 @@ class MainWindow(QMainWindow):
         root.addLayout(left, stretch=3)
         right_widget = QWidget()
         right_widget.setLayout(right)
-        right_widget.setFixedWidth(290)
+        right_widget.setFixedWidth(320)
         right_widget.setStyleSheet(f"background:{PANEL_BG}; border-radius:10px;")
         root.addWidget(right_widget)
 
@@ -606,6 +606,8 @@ class MainWindow(QMainWindow):
             self.training_finished_signal.emit(f"Error LSTM: {e}")
         finally:
             self.is_playing_back = False
+            self.btn_play_unity.setEnabled(True)
+            self._elapsed_timer.stop()
 
     # ------------------------------------------------------------------
     # Reproducción directa JSON
@@ -647,6 +649,8 @@ class MainWindow(QMainWindow):
             self.training_finished_signal.emit(f"Error Exacto: {e}")
         finally:
             self.is_playing_back = False
+            self.btn_play_raw.setEnabled(True)
+            self._elapsed_timer.stop()
 
     # ------------------------------------------------------------------
     # Video / Cámara

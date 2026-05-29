@@ -70,6 +70,19 @@ python main.py
 ## ② Robot 3D Mejorado ✅
 
 > El modelo LSTM aprende y reproduce los movimientos grabados con el robot.
+> En mayo 2026 P3 integró el nuevo rig **LABO new rig** (Blender → Unity Humanoid)
+> con soporte completo de caderas, columna vertebral (Spine/Spine1), cuello y piernas.
+
+### Mejoras del rig (P3 — Mayo 2026)
+
+| Mejora | Detalle |
+|---|---|
+| Nuevo avatar | `LABO new rig.fbx` / `.blend` con jerarquía DEF-* |
+| Swap L/R | `swapLeftRight` corrige rigs en espejo de Blender |
+| Correcciones de eje por grupo | Leg / Arm / Torso con flags negateX/Y/Z independientes |
+| Amortiguación Z | `legZMultiplier`, `armZMultiplier`, `torsoZMultiplier` (MediaPipe Z es ruidoso) |
+| Cuello | Vector nariz → promedio hombros con `neckZMultiplier=0` |
+| Diagnóstico | `logDiagnosticsOnStart=true` imprime estado de todos los huesos en la consola |
 
 ### Arquitectura del modelo (E-01)
 
@@ -99,40 +112,40 @@ frames = predictor.predict_sequence("Prueba1")
 - [x] Label map guardado y cargable (`data/label_map.pt`)
 - [x] Script reproducible: mismos datos = mismo modelo (`train.py`)
 - [x] El modelo se re-entrena automáticamente con `python train.py` cuando hay nuevas secuencias
+- [x] Nuevo rig integrado con soporte de piernas, torso y cuello (P3)
 
 ---
 
 ## ③ Secuencias Grabadas y Modelo Entrenado ✅
 
-> El modelo fue entrenado con 29 secuencias de 6 movimientos distintos, grabadas
-> directamente desde Unity con el robot "El bueno".
+> El modelo fue entrenado con 31 secuencias de 9 movimientos distintos, incluyendo
+> 2 secuencias nuevas grabadas por P3 con el **LABO new rig** (mayo 2026).
 
 ### Secuencias disponibles (`data/sequences/`)
 
-| Movimiento | Archivos | Total frames aprox. |
-|---|---|---|
-| Prueba1 | 1 (Prueba1_0.json) | ~500 |
-| Prueba2 | 1 (Prueba2_1.json) | ~500 |
-| Prueba3 | 1 (Prueba3_2.json) | ~420 |
-| Prueba4 | 20 archivos | ~5,900 |
-| Prueba5 | 2 archivos | ~410 |
-| Prueba6 | 2 archivos | ~800 |
-| macarena | 2 archivos (legacy) | ~230 |
+| Movimiento | Archivos | Total frames aprox. | Fuente |
+|---|---|---|---|
+| Prueba1 | 1 | ~500 | P3 (rig anterior) |
+| Prueba2 | 1 | ~500 | P3 (rig anterior) |
+| Prueba3 | 1 | ~420 | P3 (rig anterior) |
+| Prueba4 | 20 archivos | ~5,900 | P3 (rig anterior) |
+| Prueba5 | 2 archivos | ~410 | P3 (rig anterior) |
+| Prueba6 | 2 archivos | ~800 | P3 (rig anterior) |
+| macarena | 2 archivos (legacy) | ~230 | P3 |
+| **Nuevorig** | **1 (Nuevorig_30.json)** | **~550** | **P3 — LABO new rig** |
+| **Pruebachida** | **1 (Pruebachida_29.json)** | **~460** | **P3 — LABO new rig** |
 
-**Total: 29 archivos JSON, ~8,700+ frames de datos reales.**
+**Total: 31 archivos JSON, ~9,700+ frames de datos reales.**
 
-### Resultado del entrenamiento más reciente
+### Resultado del entrenamiento más reciente (con nuevas secuencias)
 
 ```
 Dance Labo — Entrenamiento LSTM
 ================================================
-Movimientos: {Prueba1, Prueba2, Prueba3, Prueba4, Prueba5, Prueba6, macarena}
-Total de muestras: 29
+Movimientos: {Prueba1, Prueba2, Prueba3, Prueba4, Prueba5, Prueba6, macarena, Nuevorig, Pruebachida}
+Total de muestras: 31
 Dispositivo: CPU
 Epochs: 150
-
-Epoch    1/150 | Loss: ...
-Epoch  150/150 | Loss: ...  ← Ver train.py output al correr
 
 ✅ Modelo guardado en: data/motion_model.pt
 ✅ Label map en:       data/label_map.pt
@@ -148,8 +161,8 @@ python train.py
 
 ### Criterios de aceptación — Req ③
 
-- [x] 2+ secuencias JSON en `data/sequences/` (tenemos 29)
-- [x] Modelo distingue 6+ movimientos
+- [x] 2+ secuencias JSON en `data/sequences/` (tenemos 31)
+- [x] Modelo distingue 9 movimientos
 - [x] Score continuo 0.0–1.0 por frame (similitud coseno)
 - [x] Modelo guardado en `.pt` (PyTorch portable)
 - [x] Script de entrenamiento reproducible (`train.py`)
@@ -159,9 +172,10 @@ python train.py
 
 ## ④ Mapeo de Huesos Documentado ✅
 
-> El sistema usa 9 huesos Mixamo que corresponden al esqueleto de "El bueno".
+> El sistema usa 9 huesos Mixamo para el modelo ML (scoring), y envía adicionalmente
+> Hips, Spine1 y Neck a Unity para animar el cuerpo completo.
 
-### Feature vector por frame (27 valores)
+### Feature vector ML por frame (27 valores — scoring)
 
 | Índice (×3) | Hueso Mixamo | Segmento | Peso en score |
 |---|---|---|---|
@@ -175,43 +189,67 @@ python train.py
 | 21–23 | `mixamorig:RightLeg` | Pierna derecha | (incluido) |
 | 24–26 | `mixamorig:Spine` | Torso | 10% |
 
+### Huesos adicionales enviados a Unity (animación completa — no ML)
+
+| Hueso Unity | Cálculo Python | Nota |
+|---|---|---|
+| `mixamorig:Hips` | Vector caderas → hombros | Centro de masa |
+| `mixamorig:Spine1` | Igual que Spine | Puede refinarse con más datos |
+| `mixamorig:Neck` | Vector hombros → nariz (LM 0) | Z suprimido (`neckZMultiplier=0`) |
+
 ### Correspondencia MediaPipe → Hueso Mixamo
 
 | Landmark MediaPipe | ID | Hueso Unity |
 |---|---|---|
+| nose | 0 | destino estimado de `mixamorig:Neck` |
 | left_shoulder | 11 | origen de `mixamorig:LeftArm` |
 | left_elbow | 13 | destino de `mixamorig:LeftArm` / origen de `LeftForeArm` |
 | left_wrist | 15 | destino de `mixamorig:LeftForeArm` |
 | right_shoulder | 12 | origen de `mixamorig:RightArm` |
 | right_elbow | 14 | destino de `mixamorig:RightArm` / origen de `RightForeArm` |
 | right_wrist | 16 | destino de `mixamorig:RightForeArm` |
-| left_hip | 23 | origen de `mixamorig:LeftUpLeg` |
+| left_hip | 23 | origen de `mixamorig:LeftUpLeg` + Hips/Spine |
 | left_knee | 25 | destino de `mixamorig:LeftUpLeg` / origen de `LeftLeg` |
 | left_ankle | 27 | destino de `mixamorig:LeftLeg` |
-| right_hip | 24 | origen de `mixamorig:RightUpLeg` |
+| right_hip | 24 | origen de `mixamorig:RightUpLeg` + Hips/Spine |
 | right_knee | 26 | destino de `mixamorig:RightUpLeg` / origen de `RightLeg` |
 | right_ankle | 28 | destino de `mixamorig:RightLeg` |
-| Promedio hombros 11+12 | — | origen de `mixamorig:Spine` |
-| Promedio caderas 23+24 | — | destino de `mixamorig:Spine` |
+| Promedio hombros 11+12 | — | origen de `mixamorig:Spine` / `Spine1` / `Hips` |
+| Promedio caderas 23+24 | — | destino de `mixamorig:Spine` / `Hips` |
 
-### Reglas de visibilidad
+### Sistema de coordenadas
+
+```
+MediaPipe: +X derecha, +Y abajo,   +Z atrás (lejos de cámara)
+Unity:     +X derecha, +Y arriba,  +Z adelante (hacia la cámara)
+Conversión Python: [x, -y, -z]  (MixamoMapper._mp_to_unity_coords)
+```
+
+### Reglas de visibilidad y corrección de ejes
 
 ```python
 # MixamoMapper — pose_extraction/mixamo_mapper.py
-visibility_threshold = 0.3   # configurable en __init__
-# Si visibility < threshold → usa última pose válida (freeze, sin jitter)
-# Restricción Z brazos: z_clamp_min = 0.0 (no van detrás del cuerpo)
+visibility_threshold = 0.3     # freeze de última pose válida si baja
+neck_z_multiplier    = 0.0     # suprime Z ruidoso del cuello
+
+# MixamoAnimator.cs — Unity (configurable por grupo desde Inspector)
+# Brazos:  armZMultiplier, enableArmZClamp, armZClampMin
+# Piernas: legZMultiplier, legNegateX/Y/Z
+# Torso:   torsoZMultiplier, torsoNegateX/Y/Z
+# Cuello:  neckZMultiplier
 ```
 
 ### Criterios de aceptación — Req ④
 
 - [x] 9 huesos mapeados con índice fijo y orden documentado
+- [x] 3 huesos adicionales (Hips, Spine1, Neck) para animación completa
 - [x] Función `bones_dict_to_vector()` convierte huesos a vector 27D
 - [x] Segmentos corporales con pesos que suman 1.0
 - [x] Huesos ausentes se llenan con cero (sin crash)
 - [x] Segmentos sin datos se excluyen del score (normalización automática)
 - [x] Freeze de última pose válida cuando visibility < umbral
 - [x] Restricción de eje Z para brazos (configurable)
+- [x] Correcciones de eje por grupo en Unity (legNegateX/Y/Z, armZMultiplier, etc.)
 
 ---
 
@@ -223,6 +261,7 @@ motion_ml_app/
 ├── train.py                         # Entrena el LSTM con data/sequences/
 ├── inference.py                     # Valida el modelo con datos reales
 ├── benchmark.py                     # Mide latencia E-05 (<100ms)
+├── check_env.py                     # A-01: verifica dependencias del entorno
 ├── ui/
 │   └── main_window.py               # UI PyQt6 completa
 │       ├── Selector de cámara       # Detecta cámaras disponibles
@@ -237,17 +276,25 @@ motion_ml_app/
 │   ├── dataset_builder.py           # Carga y normaliza JSONs
 │   └── model.py                     # MotionLSTMGenerator
 ├── pose_extraction/
-│   └── mixamo_mapper.py             # MediaPipe → vectores Mixamo
+│   └── mixamo_mapper.py             # MediaPipe → vectores Mixamo (Hips/Neck/Spine1)
 ├── communication/
 │   ├── udp_server.py                # Envía JSON por UDP a Unity
 │   ├── MovementComparator.cs        # D-01/D-02: Unity recibe scores
 │   └── FeedbackUI.cs               # D-05: colores por segmento en Unity
-└── data/
-    ├── motion_model.pt              # Modelo LSTM entrenado
-    ├── label_map.pt                 # {nombre: id}
-    ├── historial_scores.json        # Historial de intentos
-    ├── benchmark_report.json        # Resultado del benchmark E-05
-    └── sequences/                   # 29 JSONs de movimientos
+Assets/ (Unity)
+├── MixamoAnimator.cs                # Anima el rig (grupos Leg/Arm/Torso/Neck)
+├── MovementComparator.cs            # D-01/D-02
+├── FeedbackUI.cs                    # D-05
+├── UDPClient.cs                     # Recibe JSON de Python
+├── LABO new rig.fbx                 # Nuevo avatar (P3 — mayo 2026)
+├── LABO new rig.blend               # Fuente Blender
+└── Editor/RigMapper.cs              # Herramienta de mapeo de huesos
+data/
+├── motion_model.pt                  # Modelo LSTM entrenado (9 movimientos)
+├── label_map.pt                     # {nombre: id}
+├── historial_scores.json            # Historial de intentos
+├── benchmark_report.json            # Resultado del benchmark E-05
+└── sequences/                       # 31 JSONs de movimientos
 ```
 
 ---
