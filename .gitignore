@@ -53,7 +53,6 @@ yolov8n.pt
 *.pt
 
 # ── IDEs ──────────────────────────────────────────────────────────────────────
-.vscode/settings.json
 .idea/
 *.swp
 *.swo
@@ -66,3 +65,7 @@ Desktop.ini
 *.zip
 LABITO.zip
 *.csv
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
