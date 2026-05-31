@@ -102,6 +102,14 @@ QLabel {{
     color: {TEXT_PRIMARY};
     background: transparent;
 }}
+QToolTip {{
+    background-color: {CARD_BG};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    padding: 5px;
+    font-size: 12px;
+}}
 """
 
 
@@ -129,16 +137,45 @@ def make_btn(text, color, min_h=44):
     return btn
 
 
+class StdoutRedirector:
+    def __init__(self, original_stdout, log_callback):
+        self.original_stdout = original_stdout
+        self.log_callback = log_callback
+        self.buffer = ""
+        self.in_write = False
+
+    def write(self, string):
+        self.original_stdout.write(string)
+        if self.in_write:
+            return
+        try:
+            self.in_write = True
+            self.buffer += string
+            while "\n" in self.buffer:
+                line, self.buffer = self.buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    self.log_callback(line)
+        except Exception:
+            pass
+        finally:
+            self.in_write = False
+
+    def flush(self):
+        self.original_stdout.flush()
+
+
 class MainWindow(QMainWindow):
     training_finished_signal = pyqtSignal(str)
     camera_scan_signal       = pyqtSignal(str)  # "0,1,2" — índices de cámaras disponibles
+    log_signal               = pyqtSignal(str, str)
 
     def __init__(self, udp_server=None):
         super().__init__()
         self.udp_server = udp_server
         self.setWindowTitle("DanceLabo — Motion Capture Studio")
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "Labo.ico")))
-        self.setGeometry(100, 50, 1050, 680)
+        self.setGeometry(100, 40, 1100, 790)
         self.setStyleSheet(GLOBAL_STYLE)
 
         # Modelos
@@ -173,7 +210,15 @@ class MainWindow(QMainWindow):
         self._blink_timer = QTimer()
         self._blink_timer.timeout.connect(self._blink_rec)
 
+        self.log_history = []
         self._init_ui()
+        
+        # Redireccionar stdout para capturar todos los prints
+        self.original_stdout = sys.stdout
+        sys.stdout = StdoutRedirector(sys.stdout, self.log_text)
+        self.log_signal.connect(self._safe_update_log_ui)
+        
+        self.log_event("Listo. DanceLabo inicializado con éxito.", "INFO")
         self.training_finished_signal.connect(self.on_training_finished)
         self.camera_scan_signal.connect(self._update_camera_list)
         self._refresh_cameras()          # Detectar cámaras disponibles al arrancar
@@ -193,10 +238,21 @@ class MainWindow(QMainWindow):
         left = QVBoxLayout()
         left.setSpacing(10)
 
-        # Cabecera
+        # Cabecera con título e indicador parpadeante REC
+        header_row = QHBoxLayout()
         header = QLabel("DanceLabo Motion Studio")
         header.setStyleSheet(f"font-size:20px; font-weight:bold; color:{ACCENT_LIGHT}; padding:4px 0;")
-        left.addWidget(header)
+        header_row.addWidget(header)
+        
+        self.lbl_rec_dot = QLabel("● REC")
+        self.lbl_rec_dot.setStyleSheet(
+            f"font-size:15px; font-weight:bold; color:{REC_COLOR};"
+            " background:transparent; padding-left:10px; margin-top:2px;"
+        )
+        self.lbl_rec_dot.setVisible(False)
+        header_row.addWidget(self.lbl_rec_dot)
+        header_row.addStretch()
+        left.addLayout(header_row)
 
         # Video
         self.video_label = QLabel("Carga un video o activa la cámara para comenzar")
@@ -205,7 +261,7 @@ class MainWindow(QMainWindow):
             f"background-color:{PANEL_BG}; color:{TEXT_MUTED}; font-size:15px;"
             f" border:2px solid {BORDER}; border-radius:10px;"
         )
-        self.video_label.setMinimumSize(640, 400)
+        self.video_label.setMinimumSize(640, 360)
         left.addWidget(self.video_label, stretch=1)
 
         # Controles de fuente
@@ -264,8 +320,8 @@ class MainWindow(QMainWindow):
 
         # ── Columna derecha: controles ─────────────────────────────────
         right = QVBoxLayout()
-        right.setSpacing(12)
-        right.setContentsMargins(10, 10, 10, 10)
+        right.setSpacing(8)
+        right.setContentsMargins(10, 8, 10, 8)
 
         # -- Panel de estado --------------------------------------------
         status_group = QGroupBox("Estado")
@@ -291,33 +347,51 @@ class MainWindow(QMainWindow):
         time_row.addStretch()
         sg_lay.addLayout(time_row)
 
-        # Indicador REC parpadeante
-        self.lbl_rec_dot = QLabel("REC")
-        self.lbl_rec_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_rec_dot.setStyleSheet(
-            f"font-size:13px; font-weight:bold; color:{REC_COLOR};"
-            " background:transparent;"
+        # Log importante colocado directamente en el panel de Estado
+        log_row = QHBoxLayout()
+        log_row.setSpacing(6)
+
+        self.lbl_record_status = QLabel("Listo.")
+        self.lbl_record_status.setWordWrap(True)
+        self.lbl_record_status.setStyleSheet(
+            f"color:{TEXT_MUTED}; font-size:12px; padding:4px;"
         )
-        self.lbl_rec_dot.setVisible(False)
-        sg_lay.addWidget(self.lbl_rec_dot)
+        log_row.addWidget(self.lbl_record_status, stretch=1)
+
+        self.btn_history = QPushButton()
+        self.btn_history.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "log.svg")))
+        self.btn_history.setIconSize(QSize(16, 16))
+        self.btn_history.setFixedSize(30, 30)
+        self.btn_history.setToolTip("Ver Historial Completo de Logs")
+        self.btn_history.setStyleSheet(f"""
+            QPushButton {{
+                background:{CARD_BG}; border:1px solid {BORDER};
+                border-radius:6px;
+            }}
+            QPushButton:hover {{ background:{ACCENT}; }}
+        """)
+        self.btn_history.clicked.connect(self.show_log_history)
+        log_row.addWidget(self.btn_history)
+
+        sg_lay.addLayout(log_row)
 
         right.addWidget(status_group)
 
-        # -- Panel Transport (REC / STOP) ----------------
+        # -- Panel Transport (REC / CANCEL) ----------------
         transport_group = QGroupBox("Grabación de Secuencia")
         tg_lay = QHBoxLayout(transport_group)
         tg_lay.setSpacing(8)
 
-        self.btn_rec   = make_btn("  REC",    REC_COLOR,  50)
-        self.btn_rec.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "record.svg")))
-        self.btn_rec.setIconSize(QSize(18, 18))
-        self.btn_stop  = make_btn("  STOP",   STOP_COLOR, 50)
-        self.btn_stop.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "stop.svg")))
-        self.btn_stop.setIconSize(QSize(18, 18))
-        self.btn_rec.clicked.connect(self.start_recording)
-        self.btn_stop.clicked.connect(self.stop_recording)
-        tg_lay.addWidget(self.btn_rec)
-        tg_lay.addWidget(self.btn_stop)
+        self.btn_rec_stop = make_btn("  REC",    REC_COLOR,  50)
+        self.btn_rec_stop.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "record.svg")))
+        self.btn_rec_stop.setIconSize(QSize(18, 18))
+        self.btn_cancel = make_btn("  CANCELAR", "#7f8c8d", 50)
+        self.btn_cancel.setEnabled(False)
+
+        self.btn_rec_stop.clicked.connect(self.toggle_recording)
+        self.btn_cancel.clicked.connect(self.cancel_recording)
+        tg_lay.addWidget(self.btn_rec_stop)
+        tg_lay.addWidget(self.btn_cancel)
 
         right.addWidget(transport_group)
 
@@ -358,6 +432,22 @@ class MainWindow(QMainWindow):
         """)
         btn_refresh.clicked.connect(self._refresh_sequences)
         drop_row.addWidget(btn_refresh)
+
+        self.btn_delete = QPushButton()
+        self.btn_delete.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "trash.svg")))
+        self.btn_delete.setIconSize(QSize(16, 16))
+        self.btn_delete.setFixedSize(34, 34)
+        self.btn_delete.setToolTip("Eliminar secuencia seleccionada")
+        self.btn_delete.setStyleSheet(f"""
+            QPushButton {{
+                background:{CARD_BG}; border:1px solid {BORDER};
+                border-radius:6px; color:#c0392b;
+            }}
+            QPushButton:hover {{ background:#c0392b; color:white; }}
+        """)
+        self.btn_delete.clicked.connect(self.delete_sequence)
+        drop_row.addWidget(self.btn_delete)
+
         seq_lay.addLayout(drop_row)
 
         right.addWidget(seq_group)
@@ -409,60 +499,116 @@ class MainWindow(QMainWindow):
 
         right.addWidget(ml_group)
 
-        # -- Log de estado --------------------------------------------
-        log_group = QGroupBox("Log")
-        log_lay = QVBoxLayout(log_group)
-        self.lbl_record_status = QLabel("Listo.")
-        self.lbl_record_status.setWordWrap(True)
-        self.lbl_record_status.setStyleSheet(
-            f"color:{TEXT_MUTED}; font-size:12px; padding:4px;"
-        )
-        log_lay.addWidget(self.lbl_record_status)
-        right.addWidget(log_group)
-
         right.addStretch()
 
         # ── Ensamblar ──────────────────────────────────────────────────
         root.addLayout(left, stretch=3)
         
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFixedWidth(340)
-        scroll_area.setStyleSheet(f"""
-            QScrollArea {{
-                background-color: {PANEL_BG};
-                border: none;
-                border-radius: 10px;
-            }}
-            QScrollBar:vertical {{
-                background: {DARK_BG};
-                width: 8px;
-                margin: 0px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {BORDER};
-                min-height: 20px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {ACCENT};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-        """)
-        scroll_area.viewport().setStyleSheet("background: transparent;")
-        
         right_widget = QWidget()
         right_widget.setLayout(right)
+        right_widget.setFixedWidth(340)
         right_widget.setStyleSheet(f"background:{PANEL_BG}; border-radius:10px;")
-        scroll_area.setWidget(right_widget)
-        root.addWidget(scroll_area)
+        root.addWidget(right_widget)
+        self.lbl_record_status.setText = self.log_text
 
     # ------------------------------------------------------------------
-    # Helpers visuales
-    # ------------------------------------------------------------------
+    def log_event(self, message, level="INFO"):
+        """Niveles: 'INFO' | 'WARN' | 'ERROR'"""
+        import time
+        timestamp = time.strftime("[%H:%M:%S]")
+        
+        # Filtrar logs de frames en tiempo real para no ensuciar la terminal de historial
+        is_frame_spam = "Grabando..." in message and "frames" in message and "(" in message
+        
+        if not is_frame_spam:
+            # Evitar registrar mensajes duplicados consecutivamente en el historial
+            if not self.log_history or self.log_history[-1][2] != message:
+                self.log_history.append((timestamp, level, message))
+
+        # Emitir la señal de forma segura para actualizar la UI en el hilo principal
+        self.log_signal.emit(message, level)
+
+    def _safe_update_log_ui(self, message, level):
+        original_setText = QLabel.setText
+        
+        # Formatear el estilo conservando el mismo tamaño y peso de fuente
+        if level == "ERROR":
+            self.lbl_record_status.setStyleSheet(f"color: {REC_COLOR}; font-size:12px; padding:4px;")
+        elif level == "WARN":
+            self.lbl_record_status.setStyleSheet("color: #e67e22; font-size:12px; padding:4px;")
+        else:
+            self.lbl_record_status.setStyleSheet(f"color: {TEXT_MUTED}; font-size:12px; padding:4px;")
+
+        original_setText(self.lbl_record_status, message)
+
+    def log_text(self, text):
+        # Determinar el nivel en base al contenido
+        level = "INFO"
+        clean_text = text.replace("⚠", "").strip()
+        if "Error" in clean_text or "error" in clean_text or "incorrecta" in clean_text or "No" in clean_text:
+            level = "ERROR"
+        elif "Cancelado" in clean_text or "detenida" in clean_text or "Detenido" in clean_text or "Cancelada" in clean_text:
+            level = "WARN"
+
+        # Remover emojis visuales si vienen en el texto crudo
+        for emoji in ["⚠", "🗑", "❌"]:
+            text = text.replace(emoji, "")
+        text = text.strip()
+
+        self.log_event(text, level)
+
+    def show_log_history(self):
+        from PyQt6.QtWidgets import QDialog, QTextEdit, QVBoxLayout, QPushButton, QHBoxLayout, QLabel
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Historial de Actividades")
+        dialog.setMinimumSize(480, 360)
+        dialog.setStyleSheet(self.styleSheet())
+
+        lay = QVBoxLayout(dialog)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
+
+        title = QLabel("Historial de Eventos del Sistema")
+        title.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {ACCENT_LIGHT};")
+        lay.addWidget(title)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {DARK_BG};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
+                color: {TEXT_PRIMARY};
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 13px;
+                padding: 8px;
+            }}
+        """)
+
+        # Generar HTML con colores para legibilidad premium
+        html = "<html><body>"
+        for timestamp, level, msg in self.log_history:
+            color = "#2ecc71" if level == "INFO" else ("#e67e22" if level == "WARN" else "#e83c3c")
+            level_str = f"<span style='color: {color}; font-weight: bold;'>[{level}]</span>"
+            html += f"<p style='margin: 3px 0; line-height: 1.4;'><span style='color: #7f7f9a;'>{timestamp}</span> {level_str} {msg}</p>"
+        html += "</body></html>"
+
+        text_edit.setHtml(html)
+        # Auto-scroll al final
+        text_edit.moveCursor(text_edit.textCursor().MoveOperation.End)
+        lay.addWidget(text_edit)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_close = make_btn("Cerrar", ACCENT, 34)
+        btn_close.setFixedWidth(100)
+        btn_close.clicked.connect(dialog.accept)
+        btn_layout.addWidget(btn_close)
+        lay.addLayout(btn_layout)
+
+        dialog.exec()
 
     def _set_status_pill(self, state: str):
         """state: 'stopped' | 'recording' | 'playing'"""
@@ -486,7 +632,8 @@ class MainWindow(QMainWindow):
         self._blink_state = not self._blink_state
         color = REC_COLOR if self._blink_state else "transparent"
         self.lbl_rec_dot.setStyleSheet(
-            f"font-size:13px; font-weight:bold; color:{color}; background:transparent;"
+            f"font-size:15px; font-weight:bold; color:{color};"
+            " background:transparent; padding-left:10px; margin-top:2px;"
         )
 
     def _refresh_sequences(self):
@@ -516,7 +663,55 @@ class MainWindow(QMainWindow):
     # Grabacion
     # ------------------------------------------------------------------
 
+    def toggle_recording(self):
+        if not self.is_recording:
+            self.start_recording()
+        else:
+            self.stop_recording()
+
+    def _update_rec_stop_btn(self, state: str):
+        """state: 'rec' | 'stop'"""
+        if state == "rec":
+            self.btn_rec_stop.setText("  REC")
+            self.btn_rec_stop.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "record.svg")))
+            self.btn_rec_stop.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {REC_COLOR};
+                    color: #ffffff;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    font-size: 14px;
+                    border: none;
+                    padding: 8px 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: {REC_COLOR}cc;
+                }}
+            """)
+        else: # stop
+            self.btn_rec_stop.setText("  STOP")
+            self.btn_rec_stop.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icons", "stop.svg")))
+            self.btn_rec_stop.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {STOP_COLOR};
+                    color: #ffffff;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    font-size: 14px;
+                    border: none;
+                    padding: 8px 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: {STOP_COLOR}cc;
+                }}
+            """)
+
     def start_recording(self):
+        # Validar que la cámara o el video estén activos
+        if not (self.video_capture and self.video_capture.isOpened()):
+            self.lbl_record_status.setText("⚠ Error: ¡La cámara o el video no están activados! Activa la cámara antes de grabar.")
+            return
+
         name = self.txt_dance_name.text().strip()
         if not name:
             self.lbl_record_status.setText("⚠ Ponle nombre primero!")
@@ -524,8 +719,8 @@ class MainWindow(QMainWindow):
         self.mapper.reset_cache()
         self.recorded_frames = []
         self.is_recording = True
-        self.btn_rec.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self._update_rec_stop_btn("stop")
+        self.btn_cancel.setEnabled(True)
         self._elapsed_seconds = 0
         self.lbl_time.setText("00:00")
         self._elapsed_timer.start(1000)
@@ -536,8 +731,8 @@ class MainWindow(QMainWindow):
 
     def stop_recording(self):
         self.is_recording = False
-        self.btn_rec.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self._update_rec_stop_btn("rec")
+        self.btn_cancel.setEnabled(False)
         self._elapsed_timer.stop()
         self._blink_timer.stop()
         self.lbl_rec_dot.setVisible(False)
@@ -552,6 +747,80 @@ class MainWindow(QMainWindow):
             self._refresh_sequences()
         else:
             self.lbl_record_status.setText("Cancelado: No hay frames grabados.")
+
+    def cancel_recording(self):
+        self.is_recording = False
+        self._update_rec_stop_btn("rec")
+        self.btn_cancel.setEnabled(False)
+        self._elapsed_timer.stop()
+        self._blink_timer.stop()
+        self.lbl_rec_dot.setVisible(False)
+        self._set_status_pill("stopped")
+        self.mapper.reset_cache()
+        self.recorded_frames = []
+        self.lbl_record_status.setText("Grabación cancelada. Datos descartados.")
+
+    def delete_sequence(self):
+        name = self.combo_sequences.currentText()
+        if not name or name.startswith("—"):
+            self.lbl_record_status.setText("⚠ Selecciona una secuencia válida para eliminar.")
+            return
+
+        from PyQt6.QtWidgets import QMessageBox, QInputDialog, QLineEdit
+
+        # Diálogo de confirmación con botones en español "Sí" y "No"
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Confirmar eliminación")
+        msg_box.setText(f"¿Estás seguro de que deseas eliminar permanentemente todas las grabaciones de la secuencia '{name}'?")
+        msg_box.setIcon(QMessageBox.Icon.Question)
+        msg_box.setStyleSheet(self.styleSheet())
+
+        btn_si = msg_box.addButton("Sí", QMessageBox.ButtonRole.YesRole)
+        btn_no = msg_box.addButton("No", QMessageBox.ButtonRole.NoRole)
+        msg_box.setDefaultButton(btn_no)
+
+        msg_box.exec()
+
+        if msg_box.clickedButton() != btn_si:
+            self.lbl_record_status.setText("Eliminación cancelada.")
+            return
+
+        # Confirmación de seguridad escribiendo el nombre de la secuencia
+        text, ok = QInputDialog.getText(
+            self,
+            "Confirmación de Seguridad",
+            f"Para confirmar la eliminación permanente de '{name}',\nescribe el nombre exacto de la secuencia a continuación:",
+            QLineEdit.EchoMode.Normal
+        )
+
+        if not ok or text.strip() != name:
+            self.lbl_record_status.setText("Confirmación incorrecta. No se eliminaron los datos.")
+            return
+
+        import glob
+        seq_path = os.path.abspath(SEQUENCES_DIR)
+        pattern = os.path.join(seq_path, f"{name}_*.json")
+        matching_files = glob.glob(pattern)
+
+        single_pattern = os.path.join(seq_path, f"{name}.json")
+        if os.path.exists(single_pattern):
+            matching_files.append(single_pattern)
+
+        if not matching_files:
+            self.lbl_record_status.setText(f"⚠ No se encontraron archivos para '{name}'.")
+            return
+
+        deleted_count = 0
+        for f in matching_files:
+            try:
+                os.remove(f)
+                deleted_count += 1
+            except Exception as e:
+                print(f"[Error al eliminar {f}]: {e}")
+
+        self.lbl_record_status.setText(f"🗑 Eliminada secuencia '{name}' ({deleted_count} grabaciones borradas).")
+        self.txt_dance_name.clear()
+        self._refresh_sequences()
 
     # ------------------------------------------------------------------
     # Entrenamiento
@@ -635,8 +904,6 @@ class MainWindow(QMainWindow):
             self.training_finished_signal.emit(f"Error LSTM: {e}")
         finally:
             self.is_playing_back = False
-            self.btn_play_unity.setEnabled(True)
-            self._elapsed_timer.stop()
 
     # ------------------------------------------------------------------
     # Reproducción directa JSON
@@ -678,8 +945,6 @@ class MainWindow(QMainWindow):
             self.training_finished_signal.emit(f"Error Exacto: {e}")
         finally:
             self.is_playing_back = False
-            self.btn_play_raw.setEnabled(True)
-            self._elapsed_timer.stop()
 
     # ------------------------------------------------------------------
     # Video / Cámara
@@ -974,6 +1239,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
+        # Restaurar stdout
+        sys.stdout = self.original_stdout
         self._stop_live_eval()
         if self.video_capture:
             self.video_capture.release()
