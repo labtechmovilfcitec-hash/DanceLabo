@@ -1,57 +1,5 @@
 [
     {
-        "fecha": "2026-05-29T04:36:48.734887",
-        "movement": "Prueba3",
-        "score_pct": 88.6,
-        "label": "Excelente",
-        "desglose": {
-            "brazo_izquierdo": 76.6,
-            "brazo_derecho": 81.5,
-            "pierna_izquierda": 97.8,
-            "pierna_derecha": 98.1,
-            "torso": 99.0
-        }
-    },
-    {
-        "fecha": "2026-05-29T04:36:48.979309",
-        "movement": "Prueba4",
-        "score_pct": 94.6,
-        "label": "Excelente",
-        "desglose": {
-            "brazo_izquierdo": 90.9,
-            "brazo_derecho": 90.5,
-            "pierna_izquierda": 98.3,
-            "pierna_derecha": 98.9,
-            "torso": 98.5
-        }
-    },
-    {
-        "fecha": "2026-05-29T04:36:49.429328",
-        "movement": "Prueba5",
-        "score_pct": 92.4,
-        "label": "Excelente",
-        "desglose": {
-            "brazo_izquierdo": 81.5,
-            "brazo_derecho": 90.8,
-            "pierna_izquierda": 98.9,
-            "pierna_derecha": 99.0,
-            "torso": 97.4
-        }
-    },
-    {
-        "fecha": "2026-05-29T04:36:49.903362",
-        "movement": "Prueba6",
-        "score_pct": 93.6,
-        "label": "Excelente",
-        "desglose": {
-            "brazo_izquierdo": 98.1,
-            "brazo_derecho": 80.2,
-            "pierna_izquierda": 98.4,
-            "pierna_derecha": 98.2,
-            "torso": 96.8
-        }
-    },
-    {
         "fecha": "2026-05-29T04:36:50.428722",
         "movement": "Pruebachida",
         "score_pct": 94.7,
@@ -62,6 +10,58 @@
             "pierna_izquierda": 96.6,
             "pierna_derecha": 97.8,
             "torso": 98.0
+        }
+    },
+    {
+        "fecha": "2026-05-30T13:16:56.365451",
+        "movement": "Secuencia1",
+        "score_pct": 97.9,
+        "label": "Excelente",
+        "desglose": {
+            "brazo_izquierdo": 97.2,
+            "brazo_derecho": 97.5,
+            "pierna_izquierda": 98.4,
+            "pierna_derecha": 98.4,
+            "torso": 98.4
+        }
+    },
+    {
+        "fecha": "2026-05-30T13:16:56.532116",
+        "movement": "sixseven",
+        "score_pct": 98.1,
+        "label": "Excelente",
+        "desglose": {
+            "brazo_izquierdo": 96.8,
+            "brazo_derecho": 97.0,
+            "pierna_izquierda": 99.3,
+            "pierna_derecha": 99.5,
+            "torso": 99.1
+        }
+    },
+    {
+        "fecha": "2026-05-30T14:45:12.918322",
+        "movement": "Secuencia1",
+        "score_pct": 97.9,
+        "label": "Excelente",
+        "desglose": {
+            "brazo_izquierdo": 97.2,
+            "brazo_derecho": 97.5,
+            "pierna_izquierda": 98.4,
+            "pierna_derecha": 98.4,
+            "torso": 98.4
+        }
+    },
+    {
+        "fecha": "2026-05-30T14:45:13.217317",
+        "movement": "sixseven",
+        "score_pct": 98.1,
+        "label": "Excelente",
+        "desglose": {
+            "brazo_izquierdo": 96.8,
+            "brazo_derecho": 97.0,
+            "pierna_izquierda": 99.3,
+            "pierna_derecha": 99.5,
+            "torso": 99.1
         }
     }
 ]

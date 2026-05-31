@@ -5,18 +5,18 @@
 
 ---
 
-## ✅ Checklist General
+## Checklist General
 
 | # | Requerimiento | Estado |
 |---|---|---|
-| ① | Detecta réplica y muestra feedback visual | ✅ **COMPLETO** — LiveEvaluator + FeedbackUI.cs |
-| ② | Robot 3D mejorado (rig + aprende movimientos) | ✅ **COMPLETO** — LSTM entrenado con Prueba1-6 |
-| ③ | 2+ secuencias grabadas y modelo entrenado | ✅ **COMPLETO** — 29 archivos, 6 movimientos |
-| ④ | Mapeo de huesos documentado | ✅ **COMPLETO** |
+| ① | Detecta réplica y muestra feedback visual | **COMPLETO** — LiveEvaluator + FeedbackUI.cs |
+| ② | Robot 3D mejorado (rig + aprende movimientos) | **COMPLETO** — LSTM entrenado con Secuencia1 y sixseven |
+| ③ | 2+ secuencias grabadas y modelo entrenado | **COMPLETO** — 32 archivos, 2 movimientos |
+| ④ | Mapeo de huesos documentado | **COMPLETO** |
 
 ---
 
-## ① Detecta Réplica y Muestra Feedback Visual ✅
+## ① Detecta Réplica y Muestra Feedback Visual
 
 > El sistema detecta en tiempo real cuándo el estudiante replica el movimiento del robot
 > y muestra colores (verde / amarillo / rojo) por segmento corporal.
@@ -59,15 +59,15 @@ cd motion_ml_app
 python main.py
 
 # 3. En la UI:
-#    - Escribe el nombre del movimiento en el campo de texto (ej: "Prueba1")
-#    - Pulsa "📷 Usar Cámara"
-#    - Pulsa "🎯 Evaluar en Vivo"
+#    - Escribe el nombre del movimiento en el campo de texto (ej: "Secuencia1")
+#    - Pulsa "Usar Cámara"
+#    - Pulsa "Evaluar en Vivo"
 #    → El score se muestra en pantalla y se envía a Unity en tiempo real
 ```
 
 ---
 
-## ② Robot 3D Mejorado ✅
+## ② Robot 3D Mejorado
 
 > El modelo LSTM aprende y reproduce los movimientos grabados con el robot.
 > En mayo 2026 P3 integró el nuevo rig **LABO new rig** (Blender → Unity Humanoid)
@@ -101,7 +101,7 @@ python main.py
 
 ```python
 predictor = MotionPredictor("data/motion_model.pt")
-frames = predictor.predict_sequence("Prueba1")
+frames = predictor.predict_sequence("Secuencia1")
 # → lista de dicts [{bone: {x,y,z}}, ...] para cada frame
 ```
 
@@ -116,39 +116,36 @@ frames = predictor.predict_sequence("Prueba1")
 
 ---
 
-## ③ Secuencias Grabadas y Modelo Entrenado ✅
+## ③ Secuencias Grabadas y Modelo Entrenado 
 
-> El modelo fue entrenado con 31 secuencias de 9 movimientos distintos, incluyendo
-> 2 secuencias nuevas grabadas por P3 con el **LABO new rig** (mayo 2026).
+> El modelo fue entrenado con el dataset depurado de 32 secuencias de 2 movimientos distintos (baile principal de 26 secuencias y control/variante de 6 secuencias) utilizando el **LABO new rig** (mayo 2026).
 
 ### Secuencias disponibles (`data/sequences/`)
 
-| Movimiento | Archivos | Total frames aprox. | Fuente |
+| Movimiento | Archivos | Total frames aprox. | Descripción / Fuente |
 |---|---|---|---|
-| Prueba1 | 1 | ~500 | P3 (rig anterior) |
-| Prueba2 | 1 | ~500 | P3 (rig anterior) |
-| Prueba3 | 1 | ~420 | P3 (rig anterior) |
-| Prueba4 | 20 archivos | ~5,900 | P3 (rig anterior) |
-| Prueba5 | 2 archivos | ~410 | P3 (rig anterior) |
-| Prueba6 | 2 archivos | ~800 | P3 (rig anterior) |
-| macarena | 2 archivos (legacy) | ~230 | P3 |
-| **Nuevorig** | **1 (Nuevorig_30.json)** | **~550** | **P3 — LABO new rig** |
-| **Pruebachida** | **1 (Pruebachida_29.json)** | **~460** | **P3 — LABO new rig** |
+| **Secuencia1** | 26 archivos (0 a 25) | ~8,400 | Secuencia de movimiento principal de baile con el rig nuevo (LABO new rig). |
+| **sixseven** | 6 archivos (26 a 31) | ~1,000 | Secuencia de movimiento secundaria / control. |
 
-**Total: 31 archivos JSON, ~9,700+ frames de datos reales.**
+**Total: 32 archivos JSON, ~9,400+ frames de datos reales.**
 
 ### Resultado del entrenamiento más reciente (con nuevas secuencias)
 
 ```
-Dance Labo — Entrenamiento LSTM
-================================================
-Movimientos: {Prueba1, Prueba2, Prueba3, Prueba4, Prueba5, Prueba6, macarena, Nuevorig, Pruebachida}
-Total de muestras: 31
-Dispositivo: CPU
-Epochs: 150
+==================================================
+  Dance Labo — Entrenamiento LSTM
+==================================================
 
-✅ Modelo guardado en: data/motion_model.pt
-✅ Label map en:       data/label_map.pt
+Movimientos encontrados: {'Secuencia1': 0, 'sixseven': 1}
+Total de muestras: 32
+Longitud máxima de secuencia: 153 frames
+
+Dispositivo: cpu
+Clases: 2  |  Epochs: 150  |  LR: 0.001
+
+Modelo guardado en: data/motion_model.pt
+Label map en:       data/label_map.pt
+Loss final:         0.046911
 ```
 
 ### Cómo re-entrenar
@@ -161,8 +158,8 @@ python train.py
 
 ### Criterios de aceptación — Req ③
 
-- [x] 2+ secuencias JSON en `data/sequences/` (tenemos 31)
-- [x] Modelo distingue 9 movimientos
+- [x] 2+ secuencias JSON en `data/sequences/` (tenemos 32)
+- [x] Modelo distingue los movimientos conocidos
 - [x] Score continuo 0.0–1.0 por frame (similitud coseno)
 - [x] Modelo guardado en `.pt` (PyTorch portable)
 - [x] Script de entrenamiento reproducible (`train.py`)
@@ -170,7 +167,7 @@ python train.py
 
 ---
 
-## ④ Mapeo de Huesos Documentado ✅
+## ④ Mapeo de Huesos Documentado
 
 > El sistema usa 9 huesos Mixamo para el modelo ML (scoring), y envía adicionalmente
 > Hips, Spine1 y Neck a Unity para animar el cuerpo completo.
@@ -253,7 +250,7 @@ neck_z_multiplier    = 0.0     # suprime Z ruidoso del cuello
 
 ---
 
-## 📋 Archivos Clave del Sistema
+## Archivos Clave del Sistema
 
 ```
 motion_ml_app/
@@ -267,7 +264,7 @@ motion_ml_app/
 │       ├── Selector de cámara       # Detecta cámaras disponibles
 │       ├── REC/STOP/PLAY transport  # Grabación y reproducción
 │       ├── Enviar a Unity (LSTM)    # Reproduce secuencia LSTM en robot
-│       └── 🎯 Evaluar en Vivo       # E-04: evaluación tiempo real
+│       └── Evaluar en Vivo       # E-04: evaluación tiempo real
 ├── ml/
 │   ├── live_evaluator.py            # E-04: evaluación frame a frame
 │   ├── scoring_engine.py            # D-06: motor de puntuación
@@ -290,11 +287,11 @@ Assets/ (Unity)
 ├── LABO new rig.blend               # Fuente Blender
 └── Editor/RigMapper.cs              # Herramienta de mapeo de huesos
 data/
-├── motion_model.pt                  # Modelo LSTM entrenado (9 movimientos)
+├── motion_model.pt                  # Modelo LSTM entrenado (2 movimientos: Secuencia1 y sixseven)
 ├── label_map.pt                     # {nombre: id}
 ├── historial_scores.json            # Historial de intentos
 ├── benchmark_report.json            # Resultado del benchmark E-05
-└── sequences/                       # 31 JSONs de movimientos
+└── sequences/                       # 32 JSONs de movimientos (Secuencia1 y sixseven)
 ```
 
 ---
@@ -320,11 +317,11 @@ python main.py
 ```
 
 ### 4. En la UI
-1. Pulsa **📷 Usar Cámara** (selecciona la cámara correcta con el combo si hay varias)
-2. Escribe el nombre del movimiento (ej: `Prueba4`)
-3. Pulsa **🎯 Evaluar en Vivo**
+1. Pulsa **Usar Cámara** (selecciona la cámara correcta con el combo si hay varias)
+2. Escribe el nombre del movimiento (ej: `Secuencia1`)
+3. Pulsa **Evaluar en Vivo**
 4. El robot en Unity se mueve con tu pose, y el score aparece en pantalla
 
 ### 5. Plan B (si falla la cámara)
-- Cargar un video pregrabado con **📂 Cargar Video**
+- Cargar un video pregrabado con **Cargar Video**
 - El pipeline funciona igual con video pregrabado
