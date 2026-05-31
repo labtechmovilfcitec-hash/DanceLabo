@@ -119,7 +119,7 @@ def train():
             bar = "#" * int((1 - min(avg_loss, 1)) * 20)
             print(f"Epoch {epoch:4d}/{EPOCHS} | Loss: {avg_loss:.6f} | Best: {best_loss:.6f} |{bar}")
 
-    print(f"\n✅ Entrenamiento completo.")
+    print(f"\nEntrenamiento completo.")
     print(f"   Modelo guardado en: {MODEL_PATH}")
     print(f"   Label map en:       {LABEL_PATH}")
     print(f"   Loss final:         {best_loss:.6f}")
