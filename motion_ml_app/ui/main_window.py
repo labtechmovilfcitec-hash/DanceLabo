@@ -982,9 +982,11 @@ class MainWindow(QMainWindow):
         idx = self.selected_camera_index
         self.video_capture = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.video_capture.set(cv2.CAP_PROP_FPS, 30)
         if not self.video_capture.isOpened():
             self.video_capture = cv2.VideoCapture(idx)
             self.video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.video_capture.set(cv2.CAP_PROP_FPS, 30)
         if not self.video_capture.isOpened():
             self.lbl_record_status.setText(f"No se pudo abrir la cámara {idx}.")
             self.video_capture = None
@@ -998,15 +1000,12 @@ class MainWindow(QMainWindow):
 
     def play_video(self):
         if self.video_capture and self.video_capture.isOpened():
-            self.timer.start(33)
+            self.timer.start(20)
 
     def pause_video(self):
         self.timer.stop()
 
     def update_frame(self):
-        if self.is_camera:
-            for _ in range(4):
-                self.video_capture.grab()
         ret, frame = self.video_capture.read()
         if not ret:
             self.timer.stop()

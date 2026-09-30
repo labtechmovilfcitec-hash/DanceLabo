@@ -271,8 +271,10 @@ public class RigMapper : EditorWindow
 
         // ── 6. Parámetros calibrados (igual que El bueno funcional) ──────────
         //   • Se necesita swap para alinear el espacio de la cámara de MediaPipe con el avatar
-        anim.swapLeftRight     = true;
-        anim.smoothSpeed       = 15f;
+        anim.swapLeftRight        = true;
+        anim.smoothSpeed          = 25f;
+        anim.responsiveSpeedBoost = true;
+        anim.enableSmoothing      = true;
 
         //   • Supresión de ruido de profundidad (valores probados con El bueno)
         anim.enableArmZClamp   = true;

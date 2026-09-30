@@ -352,7 +352,10 @@ MonoBehaviour:
   torsoNegateZ: 0
   torsoZMultiplier: 0.1
   neckZMultiplier: 0
-  smoothSpeed: 15
+  smoothSpeed: 25
+  responsiveSpeedBoost: 1
+  enableSmoothing: 1
+  optimizeFrameRate: 1
   logDiagnosticsOnStart: 1
   enableHipsRotation: 0
 --- !u!4 &658118758 stripped
@@ -578,7 +581,7 @@ Transform:
   m_GameObject: {fileID: 963194225}
   serializedVersion: 2
   m_LocalRotation: {x: 0.0005505281, y: 0.99923515, z: -0.03598821, w: 0.015285681}
-  m_LocalPosition: {x: -2.74, y: 11.44, z: 12.49}
+  m_LocalPosition: {x: -2.74, y: 5.68, z: 3.79}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -678,7 +681,10 @@ MonoBehaviour:
   torsoNegateZ: 0
   torsoZMultiplier: 0.1
   neckZMultiplier: 0
-  smoothSpeed: 15
+  smoothSpeed: 25
+  responsiveSpeedBoost: 1
+  enableSmoothing: 1
+  optimizeFrameRate: 1
   logDiagnosticsOnStart: 0
   enableHipsRotation: 0
 --- !u!4 &1042066948 stripped
