@@ -12,16 +12,29 @@ public class UDPClient : MonoBehaviour
     private UdpClient udpClient;
     private Thread receiveThread;
     private bool isRunning;
-    private string lastData = "";
+    private volatile string lastData = "";
+    private volatile int dataVersion = 0;
 
     public string GetLastData()
     {
         return lastData;
     }
 
+    /// <summary>
+    /// Versión de los datos recibidos. Incrementa con cada paquete UDP.
+    /// Permite a MixamoAnimator detectar nuevos datos con una comparación numérica ultrarrápida.
+    /// </summary>
+    public int DataVersion => dataVersion;
+
     void Start()
     {
         udpClient = new UdpClient();
+        try
+        {
+            udpClient.Client.ReceiveBufferSize = 65536;
+        }
+        catch {}
+
         udpClient.Connect(host, port);
         isRunning = true;
 
@@ -46,6 +59,7 @@ public class UDPClient : MonoBehaviour
                 // NOTA: Los datos llegan en otro hilo. Para actualizar GameObjects 
                 // Guardamos los datos para aplicarlos en el Update() (Main Thread).
                 lastData = text;
+                unchecked { dataVersion++; }
             }
             catch (System.Exception e)
             {
