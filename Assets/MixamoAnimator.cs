@@ -137,10 +137,23 @@ public class MixamoAnimator : MonoBehaviour
     // Inspector — Suavizado
     // -------------------------------------------------------------------------
 
-    [Header("Suavizado de Movimiento")]
-    [Tooltip("Velocidad de interpolacion Slerp. Rango recomendado: 8-20. Mas alto = mas rapido.")]
-    [Range(1f, 30f)]
-    public float smoothSpeed = 15f;
+    // -------------------------------------------------------------------------
+    // Inspector — Suavizado y Rendimiento
+    // -------------------------------------------------------------------------
+
+    [Header("Suavizado y Rendimiento")]
+    [Tooltip("Velocidad de interpolación y seguimiento. Rango recomendado: 20-35. Mayor valor = movimiento más rápido y directo.")]
+    [Range(1f, 60f)]
+    public float smoothSpeed = 25f;
+
+    [Tooltip("Aceleración dinámica: cuando el modelo hace movimientos rápidos o cambios bruscos, aumenta la velocidad para que no vaya rezagado ni lento.")]
+    public bool responsiveSpeedBoost = true;
+
+    [Tooltip("Activa la interpolación continua y fluida en cada frame (60+ FPS). Si se desactiva, el modelo saltará directamente a la última pose recibida.")]
+    public bool enableSmoothing = true;
+
+    [Tooltip("Fuerza la tasa de refresco mínima a 60 FPS en Unity para evitar tirones o bajones de fluidez visual.")]
+    public bool optimizeFrameRate = true;
 
     // -------------------------------------------------------------------------
     // Inspector — Diagnostico
@@ -165,8 +178,11 @@ public class MixamoAnimator : MonoBehaviour
     private HashSet<Transform> _armBones;
 
     private string _lastProcessedData = "";
+    private int    _lastProcessedVersion = -1;
     private readonly Dictionary<Transform, Quaternion> _initialRotations  = new Dictionary<Transform, Quaternion>();
     private readonly Dictionary<Transform, Vector3>    _initialDirections = new Dictionary<Transform, Vector3>();
+    private readonly Dictionary<Transform, Quaternion> _targetRotations   = new Dictionary<Transform, Quaternion>();
+    private readonly List<Transform>                  _orderedBones      = new List<Transform>();
 
     // -------------------------------------------------------------------------
     // Unity lifecycle
@@ -174,6 +190,11 @@ public class MixamoAnimator : MonoBehaviour
 
     void Start()
     {
+        if (optimizeFrameRate && Application.targetFrameRate < 60)
+        {
+            Application.targetFrameRate = 60;
+        }
+
         _armBones = new HashSet<Transform> { leftArm, leftForeArm, rightArm, rightForeArm };
 
         // Brazos
@@ -195,45 +216,45 @@ public class MixamoAnimator : MonoBehaviour
         SaveInitialState(spine1, neck);
         SaveInitialState(neck,   null);  // neck no requiere child
 
+        BuildOrderedBoneList();
+
         if (logDiagnosticsOnStart)
             LogDiagnostics();
     }
 
     void LateUpdate()
     {
-        if (udpClient == null) return;
-
-        string currentData = udpClient.GetLastData();
-
-        if (currentData != _lastProcessedData && !string.IsNullOrEmpty(currentData))
+        if (udpClient != null)
         {
-            _lastProcessedData = currentData;
-            ApplyPoses(currentData);
+            int currentVer = udpClient.DataVersion;
+            string currentData = udpClient.GetLastData();
 
-            if (logDiagnosticsOnStart)
+            if (currentVer != _lastProcessedVersion || currentData != _lastProcessedData)
             {
-                try
+                _lastProcessedVersion = currentVer;
+
+                if (!string.IsNullOrEmpty(currentData) && currentData != _lastProcessedData)
                 {
-                    JObject v = JObject.Parse(currentData);
-                    Debug.Log(
-                        $"[Torso] Hips:{v["mixamorig:Hips"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
-                        $" | Spine:{v["mixamorig:Spine"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
-                        $" | Neck:{v["mixamorig:Neck"]?.ToString(Newtonsoft.Json.Formatting.None)}"
-                    );
-                    Debug.Log(
-                        $"[Legs] LeftUpLeg:{v["mixamorig:LeftUpLeg"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
-                        $" | LeftLeg:{v["mixamorig:LeftLeg"]?.ToString(Newtonsoft.Json.Formatting.None)}"
-                    );
-                    Debug.Log(
-                        $"[Arms] LeftArm:{v["mixamorig:LeftArm"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
-                        $" | RightArm:{v["mixamorig:RightArm"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
-                        $" | LeftForeArm:{v["mixamorig:LeftForeArm"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
-                        $" | RightForeArm:{v["mixamorig:RightForeArm"]?.ToString(Newtonsoft.Json.Formatting.None)}"
-                    );
+                    _lastProcessedData = currentData;
+
+                    // Descarte rápido: solo parsear JSON si contiene claves de huesos
+                    // Esto evita deserializar JSONs de score/__score_* y reduce drásticamente el Garbage Collector
+                    if (currentData.Contains("mixamorig:"))
+                    {
+                        ApplyPoses(currentData);
+
+                        if (logDiagnosticsOnStart)
+                        {
+                            LogCurrentPose(currentData);
+                        }
+                    }
                 }
-                catch {}
             }
         }
+
+        // Interpolación continua CADA FRAME (a 60, 120 o 144 FPS)
+        // Esto elimina el retraso y el efecto 'robotico/lento' entre paquetes UDP
+        InterpolateBones();
     }
 
     // -------------------------------------------------------------------------
@@ -376,10 +397,115 @@ public class MixamoAnimator : MonoBehaviour
             Quaternion rot            = Quaternion.FromToRotation(initialDir, targetDir);
             Quaternion targetRotation = rot * _initialRotations[bone];
 
-            // Slerp para suavizar
-            bone.rotation = Quaternion.Slerp(bone.rotation, targetRotation, Time.deltaTime * smoothSpeed);
+            // Almacenar rotación objetivo para interpolación continua en cada frame
+            _targetRotations[bone] = targetRotation;
         }
         // Si el vector quedo en cero tras el clamp, mantener rotacion actual.
+    }
+
+    /// <summary>
+    /// Interpola suavemente las rotaciones de todos los huesos activos en orden jerárquico (Torso -> Piernas -> Brazos).
+    /// Se ejecuta en cada frame independientemente del intervalo de paquetes UDP para lograr 60+ FPS de fluidez.
+    /// </summary>
+    private void InterpolateBones()
+    {
+        float dt = Time.deltaTime;
+        if (dt <= 0f) return;
+
+        int count = _orderedBones.Count;
+        for (int i = 0; i < count; i++)
+        {
+            Transform bone = _orderedBones[i];
+            if (bone == null) continue;
+            if (bone == hips && !enableHipsRotation) continue;
+
+            if (_targetRotations.TryGetValue(bone, out Quaternion targetRot))
+            {
+                if (!enableSmoothing || smoothSpeed >= 55f)
+                {
+                    bone.rotation = targetRot;
+                    continue;
+                }
+
+                float effectiveSpeed = smoothSpeed;
+
+                // Aceleración dinámica para movimientos rápidos:
+                // Si la distancia angular supera los 15 grados, aumentamos dinámicamente la velocidad
+                // para que el avatar no se quede atrás en bailes o movimientos veloces.
+                if (responsiveSpeedBoost)
+                {
+                    float angle = Quaternion.Angle(bone.rotation, targetRot);
+                    if (angle > 15f)
+                    {
+                        float factor = Mathf.Clamp01((angle - 15f) / 60f);
+                        effectiveSpeed = Mathf.Lerp(smoothSpeed, smoothSpeed * 2.5f, factor);
+                    }
+                }
+
+                // Suavizado exponencial independiente de la tasa de cuadros (dt)
+                float t = 1f - Mathf.Exp(-effectiveSpeed * dt);
+                bone.rotation = Quaternion.Slerp(bone.rotation, targetRot, t);
+            }
+        }
+    }
+
+    private void BuildOrderedBoneList()
+    {
+        _orderedBones.Clear();
+
+        // 1. Torso primero (padres)
+        AddBoneToOrder(hips);
+        AddBoneToOrder(spine);
+        AddBoneToOrder(spine1);
+        AddBoneToOrder(neck);
+
+        // 2. Piernas (hijos)
+        AddBoneToOrder(leftUpLeg);
+        AddBoneToOrder(rightUpLeg);
+        AddBoneToOrder(leftLeg);
+        AddBoneToOrder(rightLeg);
+
+        // 3. Brazos (hijos)
+        AddBoneToOrder(leftArm);
+        AddBoneToOrder(rightArm);
+        AddBoneToOrder(leftForeArm);
+        AddBoneToOrder(rightForeArm);
+    }
+
+    private void AddBoneToOrder(Transform bone)
+    {
+        if (bone != null && !_orderedBones.Contains(bone))
+        {
+            _orderedBones.Add(bone);
+            if (!_targetRotations.ContainsKey(bone))
+            {
+                _targetRotations[bone] = bone.rotation;
+            }
+        }
+    }
+
+    private void LogCurrentPose(string currentData)
+    {
+        try
+        {
+            JObject v = JObject.Parse(currentData);
+            Debug.Log(
+                $"[Torso] Hips:{v["mixamorig:Hips"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
+                $" | Spine:{v["mixamorig:Spine"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
+                $" | Neck:{v["mixamorig:Neck"]?.ToString(Newtonsoft.Json.Formatting.None)}"
+            );
+            Debug.Log(
+                $"[Legs] LeftUpLeg:{v["mixamorig:LeftUpLeg"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
+                $" | LeftLeg:{v["mixamorig:LeftLeg"]?.ToString(Newtonsoft.Json.Formatting.None)}"
+            );
+            Debug.Log(
+                $"[Arms] LeftArm:{v["mixamorig:LeftArm"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
+                $" | RightArm:{v["mixamorig:RightArm"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
+                $" | LeftForeArm:{v["mixamorig:LeftForeArm"]?.ToString(Newtonsoft.Json.Formatting.None)}" +
+                $" | RightForeArm:{v["mixamorig:RightForeArm"]?.ToString(Newtonsoft.Json.Formatting.None)}"
+            );
+        }
+        catch {}
     }
 
     // -------------------------------------------------------------------------
