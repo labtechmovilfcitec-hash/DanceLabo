@@ -35,6 +35,15 @@ public class UDPClient : MonoBehaviour
         }
         catch {}
 
+        // En Windows: Desactivar WSAECONNRESET (10054) para que el socket UDP
+        // no se rompa si Python aún no está iniciado o si se reinicia.
+        try
+        {
+            const int SIO_UDP_CONNRESET = -1744830452;
+            udpClient.Client.IOControl((IOControlCode)SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
+        }
+        catch {}
+
         udpClient.Connect(host, port);
         isRunning = true;
 
@@ -42,8 +51,17 @@ public class UDPClient : MonoBehaviour
         receiveThread.IsBackground = true;
         receiveThread.Start();
 
-        // Enviar un mensaje inicial para que el servidor Python conozca nuestro endpoint (IP y puerto)
-        SendMessageToPython("HELLO_FROM_UNITY");
+        // Enviar handshake periódicamente (cada 1s) para que Python siempre conozca
+        // nuestro puerto efímero, sin importar qué aplicación se abra primero ni si Python se reinicia.
+        InvokeRepeating(nameof(SendHeartbeat), 0.05f, 1.0f);
+    }
+
+    private void SendHeartbeat()
+    {
+        if (isRunning)
+        {
+            SendMessageToPython("HELLO_FROM_UNITY");
+        }
     }
 
     private void ReceiveData()
@@ -63,7 +81,11 @@ public class UDPClient : MonoBehaviour
             }
             catch (System.Exception e)
             {
-                if(isRunning) Debug.LogError("Error UDP: " + e.ToString());
+                if (isRunning)
+                {
+                    // Si ocurre un error temporal, pausar brevemente para no saturar CPU
+                    Thread.Sleep(5);
+                }
             }
         }
     }
@@ -72,19 +94,36 @@ public class UDPClient : MonoBehaviour
     {
         try
         {
-            byte[] data = Encoding.UTF8.GetBytes(message);
-            udpClient.Send(data, data.Length);
+            if (udpClient != null && udpClient.Client != null)
+            {
+                byte[] data = Encoding.UTF8.GetBytes(message);
+                udpClient.Send(data, data.Length);
+            }
         }
-        catch (System.Exception e)
+        catch (System.Exception)
         {
-            Debug.LogError("Error enviando mensaje UDP: " + e.ToString());
+            // Silencioso si Python aún no está abierto
         }
+    }
+
+    void OnDisable()
+    {
+        CancelInvoke();
+    }
+
+    void OnDestroy()
+    {
+        CancelInvoke();
+        isRunning = false;
+        try { if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort(); } catch {}
+        try { if (udpClient != null) udpClient.Close(); } catch {}
     }
 
     void OnApplicationQuit()
     {
+        CancelInvoke();
         isRunning = false;
-        if (receiveThread != null) receiveThread.Abort();
-        if (udpClient != null) udpClient.Close();
+        try { if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort(); } catch {}
+        try { if (udpClient != null) udpClient.Close(); } catch {}
     }
 }

@@ -669,17 +669,17 @@ MonoBehaviour:
   spine1: {fileID: 0}
   neck: {fileID: 0}
   enableArmZClamp: 1
-  armZClampMin: 0
-  armZMultiplier: 0.1
+  armZClampMin: -0.25
+  armZMultiplier: 1
   legNegateX: 0
   legNegateY: 0
   legNegateZ: 0
   legZMultiplier: 0.1
-  swapLeftRight: 0
-  torsoNegateX: 0
+  swapLeftRight: 1
+  torsoNegateX: 1
   torsoNegateY: 0
   torsoNegateZ: 0
-  torsoZMultiplier: 0.1
+  torsoZMultiplier: 1
   neckZMultiplier: 0
   smoothSpeed: 25
   responsiveSpeedBoost: 1

@@ -29,7 +29,7 @@ public class RigMapper : EditorWindow
     private Transform _rightUpLeg, _rightLeg, _rightFoot;
     private Transform _leftArm, _leftForeArm, _leftHand;
     private Transform _rightArm, _rightForeArm, _rightHand;
-    private Transform _hips, _spine, _spine1, _neck;
+    private Transform _hips, _spine, _spine1, _neck, _head;
 
     // -------------------------------------------------------------------------
     // Menú
@@ -168,12 +168,12 @@ public class RigMapper : EditorWindow
         _rightForeArm= FindDeep(root, "DEF-forearm.R");
         _rightHand   = FindDeep(root, "DEF-hand.R");
 
-        // ── Torso / Columna ──────────────────────────────────────────────────
-        // Confirmado: hips (directo bajo torso), neck (bajo MCH-ROT-neck)
-        _hips  = FindDeep(root, "hips");
-        _spine = FindDeep(root, "spine_fk");         // Base de la cadena FK
-        _spine1= FindDeep(root, "spine_fk.002");     // Columna media
-        _neck  = FindDeep(root, "neck");
+        // ── Torso / Cabeza (deformación real para LABO new rig) ────────────────
+        _hips  = FindDeep(root, "DEF-spine") ?? FindDeep(root, "hips");
+        _spine = FindDeep(root, "DEF-spine.002") ?? FindDeep(root, "DEF-spine.001") ?? FindDeep(root, "spine_fk");
+        _spine1= FindDeep(root, "DEF-spine.003") ?? FindDeep(root, "DEF-spine.004") ?? FindDeep(root, "spine_fk.002");
+        _head  = FindDeep(root, "DEF-spine.005") ?? FindDeep(root, "DEF-spine.006") ?? FindDeep(root, "head");
+        _neck  = null; // En LABO new rig, DEF-spine.005 une cráneo y mandíbula; neck separado deformaría la boca
     }
 
     private int CountFound()
@@ -216,7 +216,9 @@ public class RigMapper : EditorWindow
         DrawBoneRow("hips        (cadera)",           _hips);
         DrawBoneRow("spine       (columna base)",     _spine);
         DrawBoneRow("spine1      (columna media)",    _spine1);
-        DrawBoneRow("neck        (cuello)",           _neck);
+        DrawBoneRow("head        (cabeza sólida)",    _head);
+        if (_neck != null)
+            DrawBoneRow("neck        (cuello)",       _neck);
     }
 
     private void DrawBoneRow(string label, Transform bone)
@@ -260,11 +262,12 @@ public class RigMapper : EditorWindow
         anim.rightForeArm = _rightForeArm;
         anim.rightHand    = _rightHand;
 
-        // ── 4. Torso (opcionales — el rig Rigify los tiene) ─────────────────
+        // ── 4. Torso y Cabeza ──────────────────────────────────────────────
         anim.hips   = _hips;
         anim.spine  = _spine;
         anim.spine1 = _spine1;
         anim.neck   = _neck;
+        anim.head   = _head;
 
         // ── 5. UDP Client ────────────────────────────────────────────────────
         anim.udpClient = _udpClient;

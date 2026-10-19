@@ -2,6 +2,7 @@
     "recommendations": [
         "myml.vscode-markdown-plantuml-preview",
         "esbenp.prettier-vscode",
-        "jebbs.plantuml"
+        "jebbs.plantuml",
+        "visualstudiotoolsforunity.vstuc"
     ]
 }

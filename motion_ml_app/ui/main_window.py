@@ -4,7 +4,8 @@ import cv2
 import numpy as np
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QLineEdit,
-                             QGroupBox, QFormLayout, QComboBox, QFrame, QScrollArea)
+                             QGroupBox, QFormLayout, QComboBox, QFrame, QScrollArea,
+                             QCheckBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize
 from PyQt6.QtGui import QImage, QPixmap, QFont, QIcon
 import threading
@@ -305,6 +306,13 @@ class MainWindow(QMainWindow):
         cam_row.addWidget(cam_lbl)
         cam_row.addWidget(self.combo_camera, stretch=1)
         cam_row.addWidget(btn_scan)
+        
+        # Checkbox para mostrar/ocultar el indicador de Frente / Espalda
+        self.chk_show_orientation = QCheckBox("Mostrar Orientación")
+        self.chk_show_orientation.setChecked(True)
+        self.chk_show_orientation.setStyleSheet(f"color:{TEXT_MUTED}; font-size:12px; margin-left:8px;")
+        cam_row.addWidget(self.chk_show_orientation)
+        
         left.addLayout(cam_row)
 
         # ── Etiqueta de score en vivo (oculta hasta activar evaluación) ─
@@ -1027,7 +1035,8 @@ class MainWindow(QMainWindow):
         if box is not None:
             cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 100), 2)
             frame_rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
-            landmarks, results = self.extractor.extract_pose(frame_rgb, offset, original_shape)
+            full_frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            landmarks, results = self.extractor.extract_pose(frame_rgb, offset, original_shape, full_frame_rgb=full_frame_rgb)
             if results.pose_landmarks:
                 for lm in results.pose_landmarks.landmark:
                     px_x = int(lm.x * cropped.shape[1]) + offset[0]
@@ -1041,6 +1050,14 @@ class MainWindow(QMainWindow):
                     self.lbl_record_status.setText(
                         f"Grabando... ({len(self.recorded_frames)} frames)"
                     )
+                # Indicador visual de orientación (Frente / Espalda) - Opcional según checkbox
+                if self.chk_show_orientation.isChecked():
+                    is_back = landmarks.get('is_backward', False)
+                    orient_txt = "ESPALDAS (360)" if is_back else "FRENTE"
+                    orient_color = (0, 165, 255) if is_back else (0, 255, 100) # Naranja si de espaldas, verde si de frente
+                    cv2.putText(frame, f"Modo: {orient_txt}", (box[0], max(25, box[1] - 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, orient_color, 2)
+
                 # Evaluación en vivo — compara frame a frame contra referencia LSTM
                 if self.live_eval_active and self.live_evaluator and bone_vectors:
                     self._run_live_eval_frame(bone_vectors, frame)

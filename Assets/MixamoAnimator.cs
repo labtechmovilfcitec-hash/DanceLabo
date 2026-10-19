@@ -73,24 +73,41 @@ public class MixamoAnimator : MonoBehaviour
     public Transform spine1;
     [Tooltip("'El bueno': mixamorig:Neck.Labo    — Clave JSON: mixamorig:Neck")]
     public Transform neck;
+    [Tooltip("Hueso de la cabeza (opcional — si no se asigna, busca 'head' automáticamente en los hijos de neck)")]
+    public Transform head;
+
+    [Header("Rotación Corporal (Body Yaw)")]
+    [Tooltip("Activa la rotación horizontal del cuerpo completo cuando la persona gira en la vida real.\n" +
+             "Python envía 'body_yaw' en grados y el avatar rota en Y replicando el giro 360°.")]
+    public bool enableBodyYaw = true;
+
+    [Tooltip("Tiempo de suavizado orgánico del giro corporal (segundos). Rango: 0.15 - 0.25 para rotación humana fluida.")]
+    [Range(0.05f, 0.6f)]
+    public float yawSmoothTime = 0.20f;
+
+    [Tooltip("Invierte la rotación en Y si el avatar gira en dirección opuesta a ti.")]
+    public bool invertYaw = false;
+
+    [Tooltip("Ajuste fino de ángulo en grados (normalmente 0).")]
+    [Range(-180f, 180f)]
+    public float yawOffset = 0f;
 
     // -------------------------------------------------------------------------
     // Inspector — Restriccion de eje Z (brazos)
     // -------------------------------------------------------------------------
 
     [Header("Restriccion de Ejes (Brazos)")]
-    [Tooltip("Activa restriccion de eje Z en Unity. Python ya la aplica; esta es segunda capa de seguridad.")]
+    [Tooltip("Activa restriccion de eje Z en Unity en el espacio local del cuerpo para evitar que los brazos se claven detrás de la espalda.")]
     public bool enableArmZClamp = true;
 
-    [Tooltip("Minimo para Z de brazos. 0 = no van hacia atras. Negativo permite algo de movimiento posterior.")]
-    [Range(-0.5f, 0f)]
-    public float armZClampMin = 0f;
+    [Tooltip("Mínimo para Z local de brazos. -0.15 permite rango natural sin clavarse detrás del cuerpo.")]
+    [Range(-0.5f, 0.1f)]
+    public float armZClampMin = -0.15f;
 
-    [Tooltip("Factor de escala para el eje Z de los brazos (0 = sin profundidad, 1 = completo).\n" +
-             "MediaPipe sobre-estima la profundidad al subir brazos (z~0.95 en vez de ~0).\n" +
-             "Usa 0.0-0.15 para que Y domine y los brazos suban correctamente.")]
-    [Range(0f, 1f)]
-    public float armZMultiplier = 0.10f;
+    [Tooltip("Factor de escala para el alcance frontal/profundidad de los brazos en el espacio del personaje.\n" +
+             "0.6 - 1.0 permite estirar los brazos al frente de forma natural.")]
+    [Range(0f, 1.5f)]
+    public float armZMultiplier = 0.85f;
 
     // -------------------------------------------------------------------------
     // Inspector — Correccion de ejes
@@ -179,10 +196,18 @@ public class MixamoAnimator : MonoBehaviour
 
     private string _lastProcessedData = "";
     private int    _lastProcessedVersion = -1;
+    private bool   _hasReceivedFirstPacket = false;
+    private Transform  _actualRoot;
+    private Quaternion _initialRootRotation = Quaternion.identity;
+    private float      _currentYaw = 0f;
+    private float      _targetYaw  = 0f;
+    private float      _yawVelocity = 0f;
     private readonly Dictionary<Transform, Quaternion> _initialRotations  = new Dictionary<Transform, Quaternion>();
     private readonly Dictionary<Transform, Vector3>    _initialDirections = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Transform, Quaternion> _targetRotations   = new Dictionary<Transform, Quaternion>();
     private readonly List<Transform>                  _orderedBones      = new List<Transform>();
+    private Transform _spineFk;
+    private Transform _spine1Fk;
 
     // -------------------------------------------------------------------------
     // Unity lifecycle
@@ -190,18 +215,121 @@ public class MixamoAnimator : MonoBehaviour
 
     void Start()
     {
+        _actualRoot = transform;
+        _initialRootRotation = _actualRoot.rotation;
+
+        if (udpClient == null)
+        {
+            udpClient = FindObjectOfType<UDPClient>();
+            if (udpClient != null)
+                Debug.Log("<color=green>[MixamoAnimator] UDPClient encontrado y vinculado automáticamente.</color>");
+            else
+                Debug.LogWarning("[MixamoAnimator] No se encontró ningún componente UDPClient en la escena.");
+        }
+
         if (optimizeFrameRate && Application.targetFrameRate < 60)
         {
             Application.targetFrameRate = 60;
         }
 
-        _armBones = new HashSet<Transform> { leftArm, leftForeArm, rightArm, rightForeArm };
+        _armBones = new HashSet<Transform> { leftArm, leftForeArm, leftHand, rightArm, rightForeArm, rightHand };
 
-        // Brazos
+        // Configuración anatómica para LABO new rig (alienígena sin cuello largo separado):
+        // En este alienígena, la mandíbula inferior y lengua están en DEF-spine.005 y el cráneo en DEF-spine.006.
+        // Si neck y head se rotan por separado, la boca se desgarra/abre grotescamente.
+        // Al asignar head a DEF-spine.005 (la base de la cabeza) y desactivar neck independiente,
+        // toda la cabeza (cráneo + ojos + mandíbula) rota en un solo bloque sólido sin deformar la boca.
+        Transform defHeadBase = FindBoneDeep(transform, "DEF-spine.005");
+        if (defHeadBase != null)
+        {
+            head = defHeadBase;
+            neck = null;
+            Debug.Log($"<color=cyan>[MixamoAnimator] Hueso head fijado a '{head.name}' (base sólida cráneo+mandíbula)</color>");
+        }
+        else if (head == null || head.name.StartsWith("MCH-") || head.name.StartsWith("WGT-"))
+        {
+            head = FindBoneDeep(transform, "DEF-spine.006") 
+                ?? FindBoneDeep(transform, "head") 
+                ?? FindBoneDeep(transform, "DEF-head");
+        }
+
+        // Si neck es un hueso MCH- o WGT- y no es LABO, corregir al deform/FK real
+        if (defHeadBase == null && (neck == null || neck.name.StartsWith("MCH-") || neck.name.StartsWith("WGT-")))
+        {
+            Transform foundNeck = FindBoneDeep(transform, "DEF-spine.005") 
+                               ?? FindBoneDeep(transform, "neck") 
+                               ?? FindBoneDeep(transform, "DEF-neck");
+            if (foundNeck != null)
+            {
+                neck = foundNeck;
+                Debug.Log($"<color=cyan>[MixamoAnimator] Hueso neck asignado a hueso real: '{neck.name}'</color>");
+            }
+        }
+
+        // Torso Deform Chain: DEF-spine.002 (abdomen) y DEF-spine.003 (pecho)
+        // Permite reverencia (saludo japonés) y agacharse moviendo todo el cuerpo sin separar la cabeza
+        if (spine == null || spine.name.StartsWith("MCH-") || spine.name.StartsWith("WGT-") || spine.name == "spine_fk")
+        {
+            Transform defSpine = FindBoneDeep(transform, "DEF-spine.002") ?? FindBoneDeep(transform, "DEF-spine.001");
+            if (defSpine != null)
+            {
+                spine = defSpine;
+                Debug.Log($"<color=cyan>[MixamoAnimator] Hueso spine fijado a '{spine.name}'</color>");
+            }
+        }
+
+        if (spine1 == null || spine1.name.StartsWith("MCH-") || spine1.name.StartsWith("WGT-") || spine1.name == "spine_fk.002")
+        {
+            Transform defSpine1 = FindBoneDeep(transform, "DEF-spine.003") ?? FindBoneDeep(transform, "DEF-spine.004");
+            if (defSpine1 != null)
+            {
+                spine1 = defSpine1;
+                Debug.Log($"<color=cyan>[MixamoAnimator] Hueso spine1 fijado a '{spine1.name}'</color>");
+            }
+        }
+
+        if (hips == null || hips.name.StartsWith("MCH-") || hips.name.StartsWith("WGT-"))
+        {
+            Transform defHips = FindBoneDeep(transform, "DEF-spine");
+            if (defHips != null) hips = defHips;
+        }
+
+        // Sincronización de hombros/brazos en Rigify (LABO):
+        // En Rigify, los hombros y brazos cuelgan de spine_fk.002 / torso.
+        // Al sincronizar _spineFk con la rotación de spine, tanto la malla del pecho como los brazos
+        // se inclinan juntos hacia adelante durante una reverencia sin separarse.
+        _spineFk = FindBoneDeep(transform, "spine_fk.002") ?? FindBoneDeep(transform, "torso");
+        if (_spineFk != null)
+        {
+            SaveInitialState(_spineFk, null);
+        }
+        _spine1Fk = FindBoneDeep(transform, "spine_fk.003");
+        if (_spine1Fk != null)
+        {
+            SaveInitialState(_spine1Fk, null);
+        }
+
+        // Calibración para Rigify (LABO new rig) en modo espejo (selfie):
+        // 1. swapLeftRight = true alinea los huesos .L (X<0) con RightArm (X<0) y .R (X>0) con LeftArm (X>0)
+        // 2. armZMultiplier = 1.0f permite extender los brazos hacia el frente con alcance 100% natural
+        // 3. torsoZMultiplier = 1.0f permite inclinarse hacia adelante en reverencia/saludo japonés
+        // 4. armZClampMin = -0.25f impide que los brazos se claven detrás del cuerpo
+        swapLeftRight        = true;
+        torsoNegateX         = true;
+        enableArmZClamp      = true;
+        armZClampMin         = -0.25f;
+        armZMultiplier       = 1.0f;
+        torsoZMultiplier     = 1.0f;
+        enableBodyYaw        = true;
+        enableHipsRotation   = false;
+
+        // Brazos y Manos
         SaveInitialState(leftArm,      leftForeArm);
         SaveInitialState(rightArm,     rightForeArm);
         SaveInitialState(leftForeArm,  leftHand);
         SaveInitialState(rightForeArm, rightHand);
+        SaveInitialState(leftHand,     null);
+        SaveInitialState(rightHand,    null);
 
         // Piernas
         SaveInitialState(leftUpLeg,  leftLeg);
@@ -209,12 +337,14 @@ public class MixamoAnimator : MonoBehaviour
         SaveInitialState(leftLeg,    leftFoot);
         SaveInitialState(rightLeg,   rightFoot);
 
-        // Torso — cadena: hips -> spine -> spine1 -> neck
-        // Si spine1 o neck son null, se usa el siguiente disponible como child de referencia
-        SaveInitialState(hips,   spine  != null ? spine  : neck);
-        SaveInitialState(spine,  spine1 != null ? spine1 : neck);
-        SaveInitialState(spine1, neck);
-        SaveInitialState(neck,   null);  // neck no requiere child
+        // Torso — cadena: hips -> spine -> spine1 -> neck -> head
+        SaveInitialState(hips,   spine  != null ? spine  : (neck != null ? neck : head));
+        SaveInitialState(spine,  spine1 != null ? spine1 : (neck != null ? neck : head));
+        SaveInitialState(spine1, neck   != null ? neck   : head);
+        if (neck != null)
+            SaveInitialState(neck, head);
+        if (head != null)
+            SaveInitialState(head, head.childCount > 0 ? head.GetChild(0) : null);
 
         BuildOrderedBoneList();
 
@@ -227,29 +357,34 @@ public class MixamoAnimator : MonoBehaviour
         if (udpClient != null)
         {
             int currentVer = udpClient.DataVersion;
-            string currentData = udpClient.GetLastData();
-
-            if (currentVer != _lastProcessedVersion || currentData != _lastProcessedData)
+            if (currentVer != _lastProcessedVersion)
             {
                 _lastProcessedVersion = currentVer;
+                string currentData = udpClient.GetLastData();
 
-                if (!string.IsNullOrEmpty(currentData) && currentData != _lastProcessedData)
+                if (!string.IsNullOrEmpty(currentData) && currentData.Contains("mixamorig:"))
                 {
-                    _lastProcessedData = currentData;
-
-                    // Descarte rápido: solo parsear JSON si contiene claves de huesos
-                    // Esto evita deserializar JSONs de score/__score_* y reduce drásticamente el Garbage Collector
-                    if (currentData.Contains("mixamorig:"))
+                    if (!_hasReceivedFirstPacket)
                     {
-                        ApplyPoses(currentData);
+                        _hasReceivedFirstPacket = true;
+                        Debug.Log("<color=lime>[MixamoAnimator] ¡Primer paquete de pose recibido y procesado correctamente!</color>");
+                    }
 
-                        if (logDiagnosticsOnStart)
-                        {
-                            LogCurrentPose(currentData);
-                        }
+                    ApplyPoses(currentData);
+
+                    if (logDiagnosticsOnStart)
+                    {
+                        LogCurrentPose(currentData);
                     }
                 }
             }
+        }
+
+        // Suavizado continuo de rotación del cuerpo completo (Body Yaw) en cada frame con inercia orgánica (SmoothDamp)
+        if (enableBodyYaw && _actualRoot != null)
+        {
+            _currentYaw = Mathf.SmoothDampAngle(_currentYaw, _targetYaw, ref _yawVelocity, yawSmoothTime);
+            _actualRoot.rotation = _initialRootRotation * Quaternion.Euler(0f, _currentYaw, 0f);
         }
 
         // Interpolación continua CADA FRAME (a 60, 120 o 144 FPS)
@@ -272,15 +407,21 @@ public class MixamoAnimator : MonoBehaviour
         if (_initialRotations.ContainsKey(bone)) return;
 
         _initialRotations[bone] = bone.rotation;
-        _initialDirections[bone] = child != null
-            ? (child.position - bone.position).normalized
-            : bone.up;
+        Vector3 dir = child != null ? (child.position - bone.position).normalized : Vector3.zero;
+        if (dir.sqrMagnitude < 1e-4f)
+        {
+            if (bone.childCount > 0)
+                dir = (bone.GetChild(0).position - bone.position).normalized;
+            if (dir.sqrMagnitude < 1e-4f && bone.parent != null)
+                dir = (bone.position - bone.parent.position).normalized;
+            if (dir.sqrMagnitude < 1e-4f)
+                dir = bone.up;
+        }
+        _initialDirections[bone] = dir;
     }
 
     /// <summary>
     /// Parsea el JSON UDP y aplica rotaciones a todos los huesos registrados.
-    /// Las claves JSON son identicas a las que Python ya envia (sin cambios en Python).
-    /// Los Transforms del Inspector apuntan a los huesos del nuevo rig "El bueno".
     /// </summary>
     private void ApplyPoses(string jsonString)
     {
@@ -288,21 +429,73 @@ public class MixamoAnimator : MonoBehaviour
         {
             JObject v = JObject.Parse(jsonString);
 
-            // ── ORDEN IMPORTANTE: raiz → hojas ────────────────────────────────────
-            // Los huesos de torso (.Labo) son padres de los huesos de extremidades.
-            // Si se aplicaran DESPUES que piernas/brazos, la rotacion del padre
-            // invalida la world rotation ya seteada en los hijos.
-            // Siempre: torso primero → despues piernas y brazos.
-            // ──────────────────────────────────────────────────────────────────────
+            // 0. Body Yaw (Giro corporal 360°)
+            if (enableBodyYaw && v["body_yaw"] != null)
+            {
+                float rawYaw = (float)v["body_yaw"];
+                if (invertYaw) rawYaw = -rawYaw;
+                _targetYaw = rawYaw + yawOffset;
+            }
 
             // 1. Torso / Columna (padres — se aplican primero)
-            // Hips es la raiz del esqueleto — solo se anima si enableHipsRotation = true.
-            // Si los datos de Python para Hips son incorrectos, dobla TODO el personaje.
             if (enableHipsRotation)
                 ApplyBoneTransform(hips, v["mixamorig:Hips"], BoneGroup.Torso);
             ApplyBoneTransform(spine,  v["mixamorig:Spine"],  BoneGroup.Torso);
+            if (_spineFk != null && _spineFk != spine)
+            {
+                ApplyBoneTransform(_spineFk, v["mixamorig:Spine"], BoneGroup.Torso);
+            }
             ApplyBoneTransform(spine1, v["mixamorig:Spine1"], BoneGroup.Torso);
-            ApplyBoneTransform(neck,   v["mixamorig:Neck"],   BoneGroup.Torso);
+            if (_spine1Fk != null && _spine1Fk != spine1)
+            {
+                ApplyBoneTransform(_spine1Fk, v["mixamorig:Spine1"], BoneGroup.Torso);
+            }
+            // 1b. Rotación 3D de Cabeza / Cuello (Yaw, Pitch, Roll)
+            JToken hr = v["head_rotation"];
+            if (hr != null)
+            {
+                float hPitch = (float)hr["pitch"];
+                float hYaw   = (float)hr["yaw"];
+                float hRoll  = (float)hr["roll"];
+
+                // Si swapLeftRight está activo (espejo), invertimos Yaw y Roll para inclinar y rotar al mismo lado
+                if (swapLeftRight)
+                {
+                    hYaw  = -hYaw;
+                    hRoll = -hRoll;
+                }
+
+                Transform targetHead = head != null ? head : neck;
+                if (targetHead != null && _initialRotations.ContainsKey(targetHead))
+                {
+                    // Rotación en el espacio de la persona
+                    Quaternion headOffset = Quaternion.Euler(hPitch, hYaw, -hRoll);
+
+                    // Multiplicamos por la izquierda para rotar alrededor de los ejes del cuerpo y no de los ejes locales del hueso
+                    Quaternion targetRot = headOffset * _initialRotations[targetHead];
+                    if (enableBodyYaw)
+                    {
+                        targetRot = Quaternion.Euler(0f, _currentYaw, 0f) * targetRot;
+                    }
+                    _targetRotations[targetHead] = targetRot;
+
+                    // Cuello: aplica 35% de la rotación para un movimiento suave y orgánico de todo el cuello
+                    if (neck != null && neck != targetHead && _initialRotations.ContainsKey(neck))
+                    {
+                        Quaternion neckOffset = Quaternion.Euler(hPitch * 0.35f, hYaw * 0.35f, -hRoll * 0.35f);
+                        Quaternion neckTargetRot = neckOffset * _initialRotations[neck];
+                        if (enableBodyYaw)
+                        {
+                            neckTargetRot = Quaternion.Euler(0f, _currentYaw, 0f) * neckTargetRot;
+                        }
+                        _targetRotations[neck] = neckTargetRot;
+                    }
+                }
+            }
+            else
+            {
+                ApplyBoneTransform(neck, v["mixamorig:Neck"], BoneGroup.Torso);
+            }
 
             // 2. Piernas (hijos del torso)
             JToken lUpLeg = swapLeftRight ? v["mixamorig:RightUpLeg"] : v["mixamorig:LeftUpLeg"];
@@ -315,22 +508,23 @@ public class MixamoAnimator : MonoBehaviour
             ApplyBoneTransform(leftLeg,    lLeg,    BoneGroup.Leg);
             ApplyBoneTransform(rightLeg,   rLeg,   BoneGroup.Leg);
 
-            // 3. Brazos (hijos del torso)
-            JToken lArm    = swapLeftRight ? v["mixamorig:RightArm"]     : v["mixamorig:LeftArm"];
-            JToken rArm    = swapLeftRight ? v["mixamorig:LeftArm"]      : v["mixamorig:RightArm"];
+            // 3. Brazos y Manos (hijos del torso)
+            JToken lArm     = swapLeftRight ? v["mixamorig:RightArm"]     : v["mixamorig:LeftArm"];
+            JToken rArm     = swapLeftRight ? v["mixamorig:LeftArm"]      : v["mixamorig:RightArm"];
             JToken lForeArm = swapLeftRight ? v["mixamorig:RightForeArm"] : v["mixamorig:LeftForeArm"];
             JToken rForeArm = swapLeftRight ? v["mixamorig:LeftForeArm"]  : v["mixamorig:RightForeArm"];
+            JToken lHand    = swapLeftRight ? v["mixamorig:RightHand"]    : v["mixamorig:LeftHand"];
+            JToken rHand    = swapLeftRight ? v["mixamorig:LeftHand"]     : v["mixamorig:RightHand"];
 
             ApplyBoneTransform(leftArm,      lArm,      BoneGroup.Arm);
             ApplyBoneTransform(rightArm,     rArm,      BoneGroup.Arm);
             ApplyBoneTransform(leftForeArm,  lForeArm,  BoneGroup.Arm);
             ApplyBoneTransform(rightForeArm, rForeArm, BoneGroup.Arm);
+            ApplyBoneTransform(leftHand,     lHand,     BoneGroup.Arm);
+            ApplyBoneTransform(rightHand,    rHand,     BoneGroup.Arm);
         }
         catch (System.Exception)
         {
-            // Silenciar errores de parseo — paquetes UDP malformados o __score_* del MovementComparator.
-            // Descomentar para depurar:
-            // Debug.LogWarning("[MixamoAnimator] paquete malformado: " + e.Message);
         }
     }
 
@@ -354,9 +548,6 @@ public class MixamoAnimator : MonoBehaviour
                 if (legNegateX) x = -x;
                 if (legNegateY) y = -y;
                 if (legNegateZ) z = -z;
-                // Amortiguacion de profundidad: MediaPipe estima Z con mucho ruido.
-                // Un valor alto de Z hace que las piernas se doblen hacia atras.
-                // Reducir con este multiplicador (0.0-0.2 recomendado).
                 z *= legZMultiplier;
                 break;
 
@@ -369,21 +560,6 @@ public class MixamoAnimator : MonoBehaviour
                 else
                     z *= torsoZMultiplier;
                 break;
-
-            case BoneGroup.Arm:
-                // 1. Amortiguar profundidad ruidosa de MediaPipe (igual que piernas)
-                //    Al subir los brazos, MediaPipe genera z~0.95 en vez de ~0,
-                //    haciendo que el avatar rote los brazos hacia la camara en vez de arriba.
-                z *= armZMultiplier;
-
-                // 2. Clamp de Z (segunda capa): impedir que vayan detras del cuerpo
-                if (enableArmZClamp && _armBones != null && _armBones.Contains(bone))
-                {
-                    z = Mathf.Max(armZClampMin, z);
-                    float mag = Mathf.Sqrt(x * x + y * y + z * z);
-                    if (mag > 1e-6f) { x /= mag; y /= mag; z /= mag; }
-                }
-                break;
         }
 
         Vector3 targetDir  = new Vector3(x, y, z);
@@ -393,12 +569,87 @@ public class MixamoAnimator : MonoBehaviour
         {
             targetDir = targetDir.normalized;
 
-            // Rotacion desde la direccion T-Pose hacia la direccion recibida
-            Quaternion rot            = Quaternion.FromToRotation(initialDir, targetDir);
-            Quaternion targetRotation = rot * _initialRotations[bone];
+            // 1. Transformar el vector recibido (espacio de cámara) al espacio LOCAL del personaje
+            Vector3 localDir = targetDir;
+            if (enableBodyYaw)
+            {
+                localDir = Quaternion.Euler(0f, -_currentYaw, 0f) * targetDir;
+            }
+
+            // 2. En el espacio local del personaje (+Z es frente al pecho, -Z es espalda):
+            if (group == BoneGroup.Arm)
+            {
+                localDir.z *= armZMultiplier;
+
+                // Restricción Z local: impide que los brazos se claven detrás de la espalda
+                // sin importar en qué dirección esté girado el personaje en el mundo
+                if (enableArmZClamp && _armBones != null && _armBones.Contains(bone))
+                {
+                    localDir.z = Mathf.Max(armZClampMin, localDir.z);
+                }
+
+                if (localDir.sqrMagnitude > 1e-6f)
+                    localDir = localDir.normalized;
+            }
+
+            // 2b. Restricción anatómica para huesos de columna (Spine, Spine1):
+            // Flexión hacia adelante (reverencia/saludo japonés): permitida de forma completa hasta 60°.
+            // Hiperextensión hacia atrás: limitada a 15° para impedir colapsos o quiebres hacia atrás.
+            if (group == BoneGroup.Torso && (bone == spine || bone == spine1))
+            {
+                float angle = Vector3.Angle(initialDir, localDir);
+                bool isLeaningBack = localDir.z < (initialDir.z - 0.05f);
+                float maxAllowedAngle = isLeaningBack ? 15.0f : 60.0f;
+
+                if (angle > maxAllowedAngle)
+                {
+                    localDir = Vector3.RotateTowards(initialDir, localDir, maxAllowedAngle * Mathf.Deg2Rad, 0f);
+                }
+                if (localDir.sqrMagnitude > 1e-6f)
+                    localDir = localDir.normalized;
+            }
+
+            // 2c. Restricción anatómica para piernas (UpLeg y Leg):
+            // Limitar la desviación angular máxima a 45° para que las patitas alienígenas
+            // se flexionen de forma armónica al agacharse sin retorcerse ni atravesar la malla.
+            if (group == BoneGroup.Leg)
+            {
+                float legAngle = Vector3.Angle(initialDir, localDir);
+                if (legAngle > 45.0f)
+                {
+                    localDir = Vector3.RotateTowards(initialDir, localDir, 45.0f * Mathf.Deg2Rad, 0f);
+                }
+                if (localDir.sqrMagnitude > 1e-6f)
+                    localDir = localDir.normalized;
+            }
+
+            // 3. Rotación local desde la pose T-Pose inicial hacia la dirección local deseada
+            Quaternion rot = Quaternion.FromToRotation(initialDir, localDir);
+            Quaternion localTargetRotation = rot * _initialRotations[bone];
+
+            // 4. Re-aplicar el yaw del cuerpo para obtener la rotación final de mundo del hueso
+            Quaternion worldTargetRotation = localTargetRotation;
+            if (enableBodyYaw)
+            {
+                worldTargetRotation = Quaternion.Euler(0f, _currentYaw, 0f) * localTargetRotation;
+            }
+
+            // Para manos: limitar rotación respecto al antebrazo para que las manitas no se doblen de forma extrema
+            if (bone == leftHand || bone == rightHand)
+            {
+                Transform parentArm = bone == leftHand ? leftForeArm : rightForeArm;
+                if (parentArm != null && _targetRotations.TryGetValue(parentArm, out Quaternion parentTarget))
+                {
+                    float handAngle = Quaternion.Angle(parentTarget, worldTargetRotation);
+                    if (handAngle > 40.0f)
+                    {
+                        worldTargetRotation = Quaternion.RotateTowards(parentTarget, worldTargetRotation, 40.0f);
+                    }
+                }
+            }
 
             // Almacenar rotación objetivo para interpolación continua en cada frame
-            _targetRotations[bone] = targetRotation;
+            _targetRotations[bone] = worldTargetRotation;
         }
         // Si el vector quedo en cero tras el clamp, mantener rotacion actual.
     }
@@ -456,8 +707,11 @@ public class MixamoAnimator : MonoBehaviour
         // 1. Torso primero (padres)
         AddBoneToOrder(hips);
         AddBoneToOrder(spine);
+        if (_spineFk != null) AddBoneToOrder(_spineFk);
         AddBoneToOrder(spine1);
+        if (_spine1Fk != null) AddBoneToOrder(_spine1Fk);
         AddBoneToOrder(neck);
+        if (head != null) AddBoneToOrder(head);
 
         // 2. Piernas (hijos)
         AddBoneToOrder(leftUpLeg);
@@ -465,11 +719,13 @@ public class MixamoAnimator : MonoBehaviour
         AddBoneToOrder(leftLeg);
         AddBoneToOrder(rightLeg);
 
-        // 3. Brazos (hijos)
+        // 3. Brazos y Manos (hijos)
         AddBoneToOrder(leftArm);
         AddBoneToOrder(rightArm);
         AddBoneToOrder(leftForeArm);
         AddBoneToOrder(rightForeArm);
+        AddBoneToOrder(leftHand);
+        AddBoneToOrder(rightHand);
     }
 
     private void AddBoneToOrder(Transform bone)
@@ -533,6 +789,7 @@ public class MixamoAnimator : MonoBehaviour
         LogBone(sb, "spine      (mixamorig:Spine)",          spine);
         LogBone(sb, "spine1     (mixamorig:Spine1)",         spine1);
         LogBone(sb, "neck       (mixamorig:Neck)",           neck);
+        LogBone(sb, "head       (mixamorig:Head)",           head);
 
         if (udpClient == null)
             sb.AppendLine("<color=red>  WARNING: udpClient NO asignado — el avatar no recibira datos UDP.</color>");
@@ -552,5 +809,18 @@ public class MixamoAnimator : MonoBehaviour
         bool hasDir = _initialDirections.ContainsKey(bone);
         string dir  = hasDir ? _initialDirections[bone].ToString("F3") : "sin hijo valido";
         sb.AppendLine($"  OK {label}: <b>{bone.name}</b> | T-Pose dir: {dir}");
+    }
+
+    private Transform FindBoneDeep(Transform parent, string boneName)
+    {
+        if (parent == null) return null;
+        if (parent.name.Equals(boneName, System.StringComparison.OrdinalIgnoreCase)) return parent;
+        int count = parent.childCount;
+        for (int i = 0; i < count; i++)
+        {
+            Transform found = FindBoneDeep(parent.GetChild(i), boneName);
+            if (found != null) return found;
+        }
+        return null;
     }
 }
