@@ -40,7 +40,7 @@ class MixamoMapper:
         "mixamorig:RightHand",
     }
 
-    def __init__(self, enable_z_clamp=False, z_clamp_min=-0.2, visibility_threshold=0.3, neck_z_multiplier=0.0):
+    def __init__(self, enable_z_clamp=False, z_clamp_min=-0.2, visibility_threshold=0.20, neck_z_multiplier=0.0):
         """
         Args:
             enable_z_clamp (bool): Activa la restricción de eje Z para brazos.
@@ -49,9 +49,9 @@ class MixamoMapper:
                                    un vector de brazo. 0.0 = solo hacia adelante/lateral.
             un valor negativo pequeño (ej. -0.2) permite un poco
                                    de movimiento hacia atrás si se necesita.
-            visibility_threshold (float): Confianza mínima de MediaPipe. Si baja de este
-                                          umbral, se usa la última pose válida en lugar
-                                          de descartar el dato.
+            visibility_threshold (float): Confianza mínima de MediaPipe. 0.20 permite
+                                          fluidez en bailes donde los brazos cruzan el torso
+                                          sin congelarse prematuramente.
             neck_z_multiplier (float): Factor de escala para el eje Z del cuello.
                                        Por defecto 0.0 (ignora profundidad ruidosa de MediaPipe).
         """
@@ -145,13 +145,17 @@ class MixamoMapper:
             parent_lm = landmarks_data[parent_id]
             child_lm  = landmarks_data[child_id]
 
-            # Fallback inteligente para manos: si el dedo índice está tapado, usar meñique
+            # Fallback inteligente para manos: si el dedo índice está tapado, usar meñique o pulgar
             if bone_name == "mixamorig:LeftHand" and child_lm.get('v', 1.0) < self.visibility_threshold:
                 if 17 in landmarks_data and landmarks_data[17].get('v', 1.0) >= self.visibility_threshold:
                     child_lm = landmarks_data[17]
+                elif 21 in landmarks_data and landmarks_data[21].get('v', 1.0) >= self.visibility_threshold:
+                    child_lm = landmarks_data[21]
             elif bone_name == "mixamorig:RightHand" and child_lm.get('v', 1.0) < self.visibility_threshold:
                 if 18 in landmarks_data and landmarks_data[18].get('v', 1.0) >= self.visibility_threshold:
                     child_lm = landmarks_data[18]
+                elif 22 in landmarks_data and landmarks_data[22].get('v', 1.0) >= self.visibility_threshold:
+                    child_lm = landmarks_data[22]
 
             low_visibility = (
                 parent_lm.get('v', 1.0) < self.visibility_threshold or
@@ -238,26 +242,34 @@ class MixamoMapper:
         if 11 in landmarks_data and 12 in landmarks_data:
             sh_v = (landmarks_data[11].get('v', 1.0) + landmarks_data[12].get('v', 1.0)) / 2.0
             if sh_v >= 0.20:
-                shoulder_center = self._mp_to_unity_coords({
-                    'x': (landmarks_data[11]['x'] + landmarks_data[12]['x']) / 2,
-                    'y': (landmarks_data[11]['y'] + landmarks_data[12]['y']) / 2,
-                    'z': (landmarks_data[11]['z'] + landmarks_data[12]['z']) / 2,
-                })
+                lsh_u = self._mp_to_unity_coords(landmarks_data[11])
+                rsh_u = self._mp_to_unity_coords(landmarks_data[12])
+                shoulder_center = (lsh_u + rsh_u) / 2.0
 
                 has_hips = (23 in landmarks_data and 24 in landmarks_data and
                             landmarks_data[23].get('v', 1.0) >= 0.10 and landmarks_data[24].get('v', 1.0) >= 0.10)
 
                 if has_hips:
-                    hip_center = self._mp_to_unity_coords({
-                        'x': (landmarks_data[23]['x'] + landmarks_data[24]['x']) / 2,
-                        'y': (landmarks_data[23]['y'] + landmarks_data[24]['y']) / 2,
-                        'z': (landmarks_data[23]['z'] + landmarks_data[24]['z']) / 2,
-                    })
+                    hip_center = (self._mp_to_unity_coords(landmarks_data[23]) +
+                                  self._mp_to_unity_coords(landmarks_data[24])) / 2.0
                 else:
-                    # Cadera inferida anatómicamente bajo los hombros
                     hip_center = np.array([shoulder_center[0], shoulder_center[1] - 0.45, shoulder_center[2] - 0.10])
 
-                spine_dir  = shoulder_center - hip_center
+                # 1. Componente lateral (Roll): medido directamente de la inclinación de hombros en el plano frontal.
+                # Al inclinarte a los lados, la línea de hombros se desnivelará (un hombro sube y el otro baja).
+                # La columna debe ser perpendicular a los hombros para inclinarse de forma fiel y visible:
+                is_backward = landmarks_data.get('is_backward', False)
+                u = (rsh_u - lsh_u) if is_backward else (lsh_u - rsh_u)
+                shoulder_roll = float(np.arctan2(u[1], max(1e-4, abs(u[0]))))
+
+                x_roll = -float(np.sin(shoulder_roll))
+                y_roll = float(np.cos(shoulder_roll))
+
+                # 2. Componente de profundidad (Pitch): inclinación hacia adelante (reverencia/saludo)
+                # medido entre centro de hombros y centro de caderas:
+                z_pitch = float(shoulder_center[2] - hip_center[2])
+
+                spine_dir = np.array([x_roll, y_roll, z_pitch])
                 spine_norm = np.linalg.norm(spine_dir)
                 if spine_norm > 1e-6:
                     spine_dir = spine_dir / spine_norm
@@ -343,6 +355,8 @@ class MixamoMapper:
             self._last_valid_vectors["root_position"] = root_pos
         elif "root_position" in self._last_valid_vectors:
             vectors["root_position"] = self._last_valid_vectors["root_position"]
+
+        vectors["is_backward"] = bool(landmarks_data.get('is_backward', False))
 
         return vectors
 
@@ -456,19 +470,20 @@ class MixamoMapper:
         nx = float(n[0])
         nz = float(n[2])
 
-        if is_backward:
-            if nz > 0:
+        # En vistas de perfil (60° a 120°), el vector normal u x v es continuo y
+        # transiciona suavemente por 90°. Solo aplicamos el hemisferio de is_backward
+        # en las zonas donde MediaPipe puede ser ambiguo (frente vs espalda directa: |nz| > 0.40):
+        if abs(nz) > 0.40:
+            if is_backward and nz > 0:
                 nz = -nz
-        else:
-            if nz < 0:
-                # Si está de frente, nz debe pertenecer al hemisferio frontal
+            elif not is_backward and nz < 0:
                 nz = abs(nz)
 
         # Ángulo yaw en el plano horizontal XZ
         raw_yaw_deg = float(np.degrees(np.arctan2(-nx, nz)))
 
-        # Zona muerta de 8° cuando está de frente para absorber ruido de brazos en bailes
-        if not is_backward and abs(raw_yaw_deg) < 8.0:
+        # Zona muerta de 6° cuando está de frente para absorber ruido de brazos en bailes
+        if not is_backward and abs(raw_yaw_deg) < 6.0:
             raw_yaw_deg = 0.0
 
         # Suavizado circular continuo de -180° a +180°

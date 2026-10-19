@@ -21,11 +21,11 @@ class PoseExtractor:
             model_selection=0
         )
         
-        # Historial de orientación con histeresis equilibrada (ventana de 7 frames ~ 0.22s)
-        # Responde rápido al voltearse sin parpadear en falsos positivos
+        # Historial de orientación con histéresis robusta (ventana de 15 frames ~ 0.5s)
+        # Responde con estabilidad en giros 360° sin parpadeos ni falsos positivos en vistas de perfil
         self._face_detected_history = []
         self._is_facing_backward = False
-        self._history_len = 7
+        self._history_len = 15
 
     def extract_pose(self, frame_rgb, offset=(0, 0), original_shape=None, full_frame_rgb=None):
         """
@@ -56,20 +56,27 @@ class PoseExtractor:
             if nose.visibility > 0.70 and (eye_l.visibility > 0.65 or eye_r.visibility > 0.65):
                 pose_indicates_front = True
 
-        # Un frame se considera 'de frente' si se detecta rostro claramente
-        is_front_frame = face_found or pose_indicates_front
+        # Un frame se considera 'de frente' si los landmarks faciales de la pose apuntan a la cámara.
+        # Esto impide que reflejos en espejos de fondo o falsos positivos de cabello
+        # hagan que el personaje se voltee de frente cuando el usuario sigue de espaldas.
+        if results.pose_landmarks:
+            is_front_frame = pose_indicates_front
+        else:
+            is_front_frame = face_found
 
         self._face_detected_history.append(is_front_frame)
         if len(self._face_detected_history) > self._history_len:
             self._face_detected_history.pop(0)
 
-        # Histéresis ágil (7 frames):
+        # Histéresis robusta (ventana de 15 frames ~ 0.5s):
+        # Para pasar a espaldas: requiere 11+ frames sin detección facial (front_votes <= 3 con al menos 12 frames)
+        # Para volver al frente: requiere 8+ frames con rostro claramente detectado
         front_votes = sum(1 for f in self._face_detected_history if f)
         if self._is_facing_backward:
-            if front_votes >= 5:
+            if front_votes >= 8:
                 self._is_facing_backward = False
         else:
-            if front_votes <= 2 and len(self._face_detected_history) >= 5:
+            if front_votes <= 3 and len(self._face_detected_history) >= 12:
                 self._is_facing_backward = True
 
         if results.pose_landmarks and original_shape:

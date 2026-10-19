@@ -161,7 +161,7 @@ public class MixamoAnimator : MonoBehaviour
     [Header("Suavizado y Rendimiento")]
     [Tooltip("Velocidad de interpolación y seguimiento. Rango recomendado: 20-35. Mayor valor = movimiento más rápido y directo.")]
     [Range(1f, 60f)]
-    public float smoothSpeed = 25f;
+    public float smoothSpeed = 30f;
 
     [Tooltip("Aceleración dinámica: cuando el modelo hace movimientos rápidos o cambios bruscos, aumenta la velocidad para que no vaya rezagado ni lento.")]
     public bool responsiveSpeedBoost = true;
@@ -245,6 +245,20 @@ public class MixamoAnimator : MonoBehaviour
             head = defHeadBase;
             neck = null;
             Debug.Log($"<color=cyan>[MixamoAnimator] Hueso head fijado a '{head.name}' (base sólida cráneo+mandíbula)</color>");
+
+            Transform defSpine = FindBoneDeep(transform, "DEF-spine.002") ?? FindBoneDeep(transform, "DEF-spine.001");
+            if (defSpine != null)
+            {
+                spine = defSpine;
+                Debug.Log($"<color=cyan>[MixamoAnimator] Hueso spine fijado a '{spine.name}'</color>");
+            }
+
+            Transform defSpine1 = FindBoneDeep(transform, "DEF-spine.003") ?? FindBoneDeep(transform, "DEF-spine.004");
+            if (defSpine1 != null)
+            {
+                spine1 = defSpine1;
+                Debug.Log($"<color=cyan>[MixamoAnimator] Hueso spine1 fijado a '{spine1.name}'</color>");
+            }
         }
         else if (head == null || head.name.StartsWith("MCH-") || head.name.StartsWith("WGT-"))
         {
@@ -450,6 +464,10 @@ public class MixamoAnimator : MonoBehaviour
             {
                 ApplyBoneTransform(_spine1Fk, v["mixamorig:Spine1"], BoneGroup.Torso);
             }
+            // 0b. Detección de orientación espaldas (Direct Mode vs Mirror Mode)
+            bool isBackward = v["is_backward"] != null && (bool)v["is_backward"];
+            bool shouldSwap = swapLeftRight && !isBackward;
+
             // 1b. Rotación 3D de Cabeza / Cuello (Yaw, Pitch, Roll)
             JToken hr = v["head_rotation"];
             if (hr != null)
@@ -458,8 +476,8 @@ public class MixamoAnimator : MonoBehaviour
                 float hYaw   = (float)hr["yaw"];
                 float hRoll  = (float)hr["roll"];
 
-                // Si swapLeftRight está activo (espejo), invertimos Yaw y Roll para inclinar y rotar al mismo lado
-                if (swapLeftRight)
+                // Si shouldSwap está activo (espejo), invertimos Yaw y Roll para inclinar y rotar al mismo lado
+                if (shouldSwap)
                 {
                     hYaw  = -hYaw;
                     hRoll = -hRoll;
@@ -468,11 +486,20 @@ public class MixamoAnimator : MonoBehaviour
                 Transform targetHead = head != null ? head : neck;
                 if (targetHead != null && _initialRotations.ContainsKey(targetHead))
                 {
-                    // Rotación en el espacio de la persona
-                    Quaternion headOffset = Quaternion.Euler(hPitch, hYaw, -hRoll);
+                    // La cabeza acompaña e integra la inclinación lateral del torso (DEF-spine.003 / DEF-spine.002)
+                    Transform torsoRef = spine1 != null ? spine1 : spine;
+                    Quaternion torsoTilt = Quaternion.identity;
+                    if (torsoRef != null && _targetRotations.TryGetValue(torsoRef, out Quaternion spineRot) && _initialRotations.ContainsKey(torsoRef))
+                    {
+                        torsoTilt = spineRot * Quaternion.Inverse(_initialRotations[torsoRef]);
+                        if (enableBodyYaw)
+                        {
+                            torsoTilt = Quaternion.Euler(0f, -_currentYaw, 0f) * torsoTilt;
+                        }
+                    }
 
-                    // Multiplicamos por la izquierda para rotar alrededor de los ejes del cuerpo y no de los ejes locales del hueso
-                    Quaternion targetRot = headOffset * _initialRotations[targetHead];
+                    Quaternion headOffset = Quaternion.Euler(hPitch, hYaw, -hRoll);
+                    Quaternion targetRot = torsoTilt * headOffset * _initialRotations[targetHead];
                     if (enableBodyYaw)
                     {
                         targetRot = Quaternion.Euler(0f, _currentYaw, 0f) * targetRot;
@@ -483,7 +510,7 @@ public class MixamoAnimator : MonoBehaviour
                     if (neck != null && neck != targetHead && _initialRotations.ContainsKey(neck))
                     {
                         Quaternion neckOffset = Quaternion.Euler(hPitch * 0.35f, hYaw * 0.35f, -hRoll * 0.35f);
-                        Quaternion neckTargetRot = neckOffset * _initialRotations[neck];
+                        Quaternion neckTargetRot = torsoTilt * neckOffset * _initialRotations[neck];
                         if (enableBodyYaw)
                         {
                             neckTargetRot = Quaternion.Euler(0f, _currentYaw, 0f) * neckTargetRot;
@@ -498,10 +525,10 @@ public class MixamoAnimator : MonoBehaviour
             }
 
             // 2. Piernas (hijos del torso)
-            JToken lUpLeg = swapLeftRight ? v["mixamorig:RightUpLeg"] : v["mixamorig:LeftUpLeg"];
-            JToken rUpLeg = swapLeftRight ? v["mixamorig:LeftUpLeg"]  : v["mixamorig:RightUpLeg"];
-            JToken lLeg   = swapLeftRight ? v["mixamorig:RightLeg"]   : v["mixamorig:LeftLeg"];
-            JToken rLeg   = swapLeftRight ? v["mixamorig:LeftLeg"]    : v["mixamorig:RightLeg"];
+            JToken lUpLeg = shouldSwap ? v["mixamorig:RightUpLeg"] : v["mixamorig:LeftUpLeg"];
+            JToken rUpLeg = shouldSwap ? v["mixamorig:LeftUpLeg"]  : v["mixamorig:RightUpLeg"];
+            JToken lLeg   = shouldSwap ? v["mixamorig:RightLeg"]   : v["mixamorig:LeftLeg"];
+            JToken rLeg   = shouldSwap ? v["mixamorig:LeftLeg"]    : v["mixamorig:RightLeg"];
 
             ApplyBoneTransform(leftUpLeg,  lUpLeg,  BoneGroup.Leg);
             ApplyBoneTransform(rightUpLeg, rUpLeg, BoneGroup.Leg);
@@ -509,12 +536,12 @@ public class MixamoAnimator : MonoBehaviour
             ApplyBoneTransform(rightLeg,   rLeg,   BoneGroup.Leg);
 
             // 3. Brazos y Manos (hijos del torso)
-            JToken lArm     = swapLeftRight ? v["mixamorig:RightArm"]     : v["mixamorig:LeftArm"];
-            JToken rArm     = swapLeftRight ? v["mixamorig:LeftArm"]      : v["mixamorig:RightArm"];
-            JToken lForeArm = swapLeftRight ? v["mixamorig:RightForeArm"] : v["mixamorig:LeftForeArm"];
-            JToken rForeArm = swapLeftRight ? v["mixamorig:LeftForeArm"]  : v["mixamorig:RightForeArm"];
-            JToken lHand    = swapLeftRight ? v["mixamorig:RightHand"]    : v["mixamorig:LeftHand"];
-            JToken rHand    = swapLeftRight ? v["mixamorig:LeftHand"]     : v["mixamorig:RightHand"];
+            JToken lArm     = shouldSwap ? v["mixamorig:RightArm"]     : v["mixamorig:LeftArm"];
+            JToken rArm     = shouldSwap ? v["mixamorig:LeftArm"]      : v["mixamorig:RightArm"];
+            JToken lForeArm = shouldSwap ? v["mixamorig:RightForeArm"] : v["mixamorig:LeftForeArm"];
+            JToken rForeArm = shouldSwap ? v["mixamorig:LeftForeArm"]  : v["mixamorig:RightForeArm"];
+            JToken lHand    = shouldSwap ? v["mixamorig:RightHand"]    : v["mixamorig:LeftHand"];
+            JToken rHand    = shouldSwap ? v["mixamorig:LeftHand"]     : v["mixamorig:RightHand"];
 
             ApplyBoneTransform(leftArm,      lArm,      BoneGroup.Arm);
             ApplyBoneTransform(rightArm,     rArm,      BoneGroup.Arm);
@@ -647,9 +674,9 @@ public class MixamoAnimator : MonoBehaviour
                     Quaternion naturalHandRot = parentTarget * initialRelRot;
 
                     float wristDeflection = Quaternion.Angle(naturalHandRot, worldTargetRotation);
-                    if (wristDeflection > 45.0f)
+                    if (wristDeflection > 65.0f)
                     {
-                        worldTargetRotation = Quaternion.RotateTowards(naturalHandRot, worldTargetRotation, 45.0f);
+                        worldTargetRotation = Quaternion.RotateTowards(naturalHandRot, worldTargetRotation, 65.0f);
                     }
                 }
             }

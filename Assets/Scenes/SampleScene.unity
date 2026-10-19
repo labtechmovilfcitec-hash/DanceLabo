@@ -340,23 +340,23 @@ MonoBehaviour:
   spine1: {fileID: 112263452}
   neck: {fileID: 1293379851}
   enableArmZClamp: 1
-  armZClampMin: 0
-  armZMultiplier: 0.1
+  armZClampMin: -0.25
+  armZMultiplier: 1
   legNegateX: 0
   legNegateY: 0
   legNegateZ: 0
   legZMultiplier: 0.1
   swapLeftRight: 1
-  torsoNegateX: 1
+  torsoNegateX: 0
   torsoNegateY: 0
   torsoNegateZ: 0
-  torsoZMultiplier: 0.1
+  torsoZMultiplier: 1
   neckZMultiplier: 0
-  smoothSpeed: 25
+  smoothSpeed: 30
   responsiveSpeedBoost: 1
   enableSmoothing: 1
   optimizeFrameRate: 1
-  logDiagnosticsOnStart: 1
+  logDiagnosticsOnStart: 0
   enableHipsRotation: 0
 --- !u!4 &658118758 stripped
 Transform:
@@ -681,7 +681,7 @@ MonoBehaviour:
   torsoNegateZ: 0
   torsoZMultiplier: 1
   neckZMultiplier: 0
-  smoothSpeed: 25
+  smoothSpeed: 30
   responsiveSpeedBoost: 1
   enableSmoothing: 1
   optimizeFrameRate: 1
