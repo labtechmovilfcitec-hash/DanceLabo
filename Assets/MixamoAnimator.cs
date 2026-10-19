@@ -315,7 +315,7 @@ public class MixamoAnimator : MonoBehaviour
         // 3. torsoZMultiplier = 1.0f permite inclinarse hacia adelante en reverencia/saludo japonés
         // 4. armZClampMin = -0.25f impide que los brazos se claven detrás del cuerpo
         swapLeftRight        = true;
-        torsoNegateX         = true;
+        torsoNegateX         = false;
         enableArmZClamp      = true;
         armZClampMin         = -0.25f;
         armZMultiplier       = 1.0f;
@@ -634,16 +634,22 @@ public class MixamoAnimator : MonoBehaviour
                 worldTargetRotation = Quaternion.Euler(0f, _currentYaw, 0f) * localTargetRotation;
             }
 
-            // Para manos: limitar rotación respecto al antebrazo para que las manitas no se doblen de forma extrema
+            // Para manos: limitar la deflexión respecto a su postura natural de reposo alineada con el antebrazo.
+            // Esto permite todos los movimientos de la Macarena y baile sin que la muñeca salte o se quiebre.
             if (bone == leftHand || bone == rightHand)
             {
                 Transform parentArm = bone == leftHand ? leftForeArm : rightForeArm;
-                if (parentArm != null && _targetRotations.TryGetValue(parentArm, out Quaternion parentTarget))
+                if (parentArm != null && _targetRotations.TryGetValue(parentArm, out Quaternion parentTarget)
+                    && _initialRotations.ContainsKey(parentArm) && _initialRotations.ContainsKey(bone))
                 {
-                    float handAngle = Quaternion.Angle(parentTarget, worldTargetRotation);
-                    if (handAngle > 40.0f)
+                    // Postura natural de reposo de la mano en el espacio de mundo actual del antebrazo
+                    Quaternion initialRelRot = Quaternion.Inverse(_initialRotations[parentArm]) * _initialRotations[bone];
+                    Quaternion naturalHandRot = parentTarget * initialRelRot;
+
+                    float wristDeflection = Quaternion.Angle(naturalHandRot, worldTargetRotation);
+                    if (wristDeflection > 45.0f)
                     {
-                        worldTargetRotation = Quaternion.RotateTowards(parentTarget, worldTargetRotation, 40.0f);
+                        worldTargetRotation = Quaternion.RotateTowards(naturalHandRot, worldTargetRotation, 45.0f);
                     }
                 }
             }

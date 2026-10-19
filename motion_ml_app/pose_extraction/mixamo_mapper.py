@@ -411,8 +411,9 @@ class MixamoMapper:
     def _compute_body_yaw(self, landmarks_data: dict) -> float | None:
         """
         Calcula el ángulo de rotación horizontal del cuerpo (yaw en grados de -180° a +180°).
-        0° = de frente a la cámara, ±90° = perfil, ±180° = de espaldas.
-        Inmune a movimientos de brazos (Macarena, Six Seven, baile) mientras el cuerpo está de frente.
+        Usa el vector normal 3D del plano del torso (producto cruz hombros × columna).
+        Es 100% inmune a la inclinación lateral (roll) al agacharse o inclinarse a los lados
+        y a movimientos de brazos (Macarena, baile).
         """
         if not all(idx in landmarks_data for idx in [11, 12]):
             return None
@@ -426,48 +427,51 @@ class MixamoMapper:
         lsh_u = self._mp_to_unity_coords(lsh)
         rsh_u = self._mp_to_unity_coords(rsh)
 
-        # Distancia 2D entre hombros en el plano de la cámara
-        dx_2d = float(np.hypot(lsh['x'] - rsh['x'], lsh['y'] - rsh['y']))
-        if dx_2d > self._max_shoulder_width_2d:
-            self._max_shoulder_width_2d = 0.95 * self._max_shoulder_width_2d + 0.05 * dx_2d
+        # Vector de hombros (u): de hombro derecho a hombro izquierdo en 3D
+        u = lsh_u - rsh_u
 
-        # Vector hombro izquierdo → hombro derecho en el plano horizontal XZ
-        shoulder_vec = lsh_u - rsh_u
+        # Vector de columna (v): de caderas al centro de hombros
+        sh_center = (lsh_u + rsh_u) / 2.0
+        has_hips = (23 in landmarks_data and 24 in landmarks_data and
+                    landmarks_data[23].get('v', 1.0) >= 0.10 and landmarks_data[24].get('v', 1.0) >= 0.10)
+        if has_hips:
+            hip_center = (self._mp_to_unity_coords(landmarks_data[23]) +
+                          self._mp_to_unity_coords(landmarks_data[24])) / 2.0
+            v = sh_center - hip_center
+        else:
+            # Perpendicular a los hombros en el plano frontal
+            v = np.array([-u[1], u[0], 0.0])
 
-        x_component = float(shoulder_vec[0])
-        z_component = float(shoulder_vec[2]) * 0.65
+        # Normal al plano del torso: n = u × v (apunta hacia adelante saliendo del pecho)
+        n = np.cross(u, v)
+        norm_n = np.linalg.norm(n)
+        if norm_n < 1e-6:
+            return None
+        n = n / norm_n
 
         is_backward = landmarks_data.get('is_backward', False)
 
-        # Si el detector de orientación confirma que la persona está de espaldas:
-        # El vector pertenece al hemisferio posterior (x_component < 0)
+        # En Unity: +Z es adelante (hacia la cámara), +X es derecha
+        # n[0] es X, n[2] es Z
+        nx = float(n[0])
+        nz = float(n[2])
+
         if is_backward:
-            if x_component > 0:
-                x_component = -x_component
-            if abs(x_component) < 1e-4 and abs(z_component) < 1e-4:
-                x_component = -1.0
+            if nz > 0:
+                nz = -nz
+        else:
+            if nz < 0:
+                # Si está de frente, nz debe pertenecer al hemisferio frontal
+                nz = abs(nz)
 
-        norm = np.hypot(x_component, z_component)
-        if norm < 1e-6:
-            return None
+        # Ángulo yaw en el plano horizontal XZ
+        raw_yaw_deg = float(np.degrees(np.arctan2(-nx, nz)))
 
-        yaw_rad = np.arctan2(z_component, x_component)
-        raw_yaw_deg = float(np.degrees(yaw_rad))
+        # Zona muerta de 8° cuando está de frente para absorber ruido de brazos en bailes
+        if not is_backward and abs(raw_yaw_deg) < 8.0:
+            raw_yaw_deg = 0.0
 
-        # Restricción geométrica:
-        # Si la persona está de frente, el ancho 2D de hombros debe encogerse para que haya rotación real.
-        # Al mover los brazos o bailar sin girar el torso, dx_2d se mantiene en ~100%,
-        # impidiendo que la profundidad ruidosa de los brazos gire falsamente al personaje.
-        if not is_backward and self._max_shoulder_width_2d > 0.05:
-            width_ratio = min(1.0, dx_2d / max(1e-4, self._max_shoulder_width_2d * 0.90))
-            max_yaw_allowed = float(np.degrees(np.arccos(width_ratio))) + 12.0
-            raw_yaw_deg = float(np.clip(raw_yaw_deg, -max_yaw_allowed, max_yaw_allowed))
-
-            # Zona muerta de 7° para absorber movimientos sutiles de brazos sin girar el cuerpo
-            if abs(raw_yaw_deg) < 7.0:
-                raw_yaw_deg = 0.0
-
-        # Suavizado circular: maneja de forma continua y suave todo el rango de -180° a +180°
+        # Suavizado circular continuo de -180° a +180°
         yaw_rad_smoothed = np.radians(raw_yaw_deg)
         self._yaw_sin_history.append(float(np.sin(yaw_rad_smoothed)))
         self._yaw_cos_history.append(float(np.cos(yaw_rad_smoothed)))
