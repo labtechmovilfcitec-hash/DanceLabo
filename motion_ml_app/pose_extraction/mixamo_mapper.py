@@ -1,4 +1,51 @@
 import numpy as np
+import time
+
+class OneEuroFilter:
+    """
+    Filtro adaptativo One Euro Filter (Casiez et al., CHI 2012).
+    Elimina micro-vibraciones y temblores a baja velocidad manteniendo latencia cero en movimientos rápidos.
+    """
+    def __init__(self, min_cutoff=1.5, beta=0.02, d_cutoff=1.0):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self.x_prev = None
+        self.dx_prev = None
+        self.t_prev = None
+
+    def filter(self, x: np.ndarray, t: float) -> np.ndarray:
+        x = np.asarray(x, dtype=float)
+        if self.x_prev is None or self.t_prev is None:
+            self.x_prev = x.copy()
+            self.dx_prev = np.zeros_like(x)
+            self.t_prev = t
+            return x.copy()
+
+        dt = max(1e-4, t - self.t_prev)
+        self.t_prev = t
+
+        dx = (x - self.x_prev) / dt
+        edx = self._alpha(self.d_cutoff, dt)
+        dx_hat = edx * dx + (1.0 - edx) * self.dx_prev
+        self.dx_prev = dx_hat
+
+        speed = float(np.linalg.norm(dx_hat))
+        cutoff = self.min_cutoff + self.beta * speed
+        alpha = self._alpha(cutoff, dt)
+
+        x_hat = alpha * x + (1.0 - alpha) * self.x_prev
+        self.x_prev = x_hat
+        return x_hat
+
+    def _alpha(self, cutoff, dt):
+        tau = 1.0 / (2.0 * np.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def reset(self):
+        self.x_prev = None
+        self.dx_prev = None
+        self.t_prev = None
 
 class MixamoMapper:
     """
@@ -64,14 +111,25 @@ class MixamoMapper:
         # Usado para "congelar" la pose cuando la visibilidad es baja.
         self._last_valid_vectors: dict = {}
 
-        # Buffer circular para suavizado del body_yaw.
+        # Buffer circular para suavizado del body_yaw (5 frames ~ 0.08s para rotación instantánea).
         # Promedio de sin/cos maneja correctamente el wrap-around en +/-180 grados.
-        self._yaw_buffer_size = 7
+        self._yaw_buffer_size = 5
         self._yaw_sin_history: list = []
         self._yaw_cos_history: list = []
+        self._last_stable_yaw: float = 0.0
 
-        # Calibración de ancho 2D de hombros para aislar movimientos de brazos de giros del cuerpo
-        self._max_shoulder_width_2d = 0.20
+        # Filtros adaptativos One Euro Filter por cada hueso para máxima fluidez orgánica
+        self._filters: dict = {}
+
+    def _filter_vector(self, bone_name: str, vec: np.ndarray) -> np.ndarray:
+        """Aplica suavizado adaptativo One Euro Filter para eliminar micro-temblores sin retraso."""
+        if bone_name not in self._filters:
+            self._filters[bone_name] = OneEuroFilter(min_cutoff=1.5, beta=0.02)
+        filtered = self._filters[bone_name].filter(vec, time.time())
+        norm = np.linalg.norm(filtered)
+        if norm > 1e-6:
+            filtered = filtered / norm
+        return filtered
 
     # ------------------------------------------------------------------
     # Coordenadas
@@ -128,14 +186,18 @@ class MixamoMapper:
         """
         vectors = {}
 
-        # Detección de colapso o pérdida de tracking:
-        # Si la persona se sale del encuadre o se acerca demasiado, los landmarks se agrupan en una bolita (< 0.05).
-        # En ese caso, retenemos la última pose válida para no deformar o colapsar el avatar.
+        # Detección de colapso o pérdida real de tracking:
+        # En vistas de perfil (de lado), los hombros se alinean en el eje de visión de la cámara (dist_2d < 0.03),
+        # pero la persona sigue erguida (torso_height > 0.05).
+        # Solo se considera colapso si AMBAS distancias (entre hombros y altura del torso) colapsan a un punto.
         if 11 in landmarks_data and 12 in landmarks_data:
             lsh = landmarks_data[11]
             rsh = landmarks_data[12]
             dist_2d = float(np.hypot(abs(lsh['x'] - rsh['x']), abs(lsh['y'] - rsh['y'])))
-            if dist_2d < 0.05:
+            torso_h = 1.0
+            if 23 in landmarks_data and 24 in landmarks_data:
+                torso_h = float(max(abs(lsh['y'] - landmarks_data[23]['y']), abs(rsh['y'] - landmarks_data[24]['y'])))
+            if dist_2d < 0.012 and torso_h < 0.035:
                 return self._last_valid_vectors.copy() if self._last_valid_vectors else {}
 
         for bone_name, (parent_id, child_id) in self.BONE_PAIRS.items():
@@ -170,10 +232,25 @@ class MixamoMapper:
                 continue
 
             # Calcular vector fresco
-            pos_parent = self._mp_to_unity_coords(parent_lm)
-            pos_child  = self._mp_to_unity_coords(child_lm)
-
-            direction = pos_child - pos_parent
+            # Si world_landmarks (MediaPipe 3D en metros) está disponible, lo usamos para precisión anatómica
+            # Esto resuelve completamente las distorsiones de profundidad 2D en vistas de perfil y giros
+            wlms = landmarks_data.get('world_landmarks')
+            if (wlms and parent_id in wlms and child_id in wlms and
+                wlms[parent_id].get('v', 1.0) >= self.visibility_threshold and
+                wlms[child_id].get('v', 1.0) >= self.visibility_threshold):
+                p_w = wlms[parent_id]
+                c_w = wlms[child_id]
+                # MediaPipe world: +X derecha, +Y abajo, +Z alejándose
+                # Unity:          +X derecha, +Y arriba, +Z hacia cámara (adelante)
+                direction = np.array([
+                    c_w['x'] - p_w['x'],
+                    -(c_w['y'] - p_w['y']),
+                    -(c_w['z'] - p_w['z'])
+                ])
+            else:
+                pos_parent = self._mp_to_unity_coords(parent_lm)
+                pos_child  = self._mp_to_unity_coords(child_lm)
+                direction = pos_child - pos_parent
 
             # Normalizar
             norm = np.linalg.norm(direction)
@@ -183,6 +260,9 @@ class MixamoMapper:
 
             # Aplicar restricción de eje Z (solo brazos)
             direction = self._apply_z_clamp(bone_name, direction)
+
+            # Suavizado adaptativo One Euro Filter (elimina jitter estático y da fluidez instantánea)
+            direction = self._filter_vector(bone_name, direction)
 
             bone_vector = {
                 "x": float(direction[0]),
@@ -260,19 +340,62 @@ class MixamoMapper:
                 # La columna debe ser perpendicular a los hombros para inclinarse de forma fiel y visible:
                 is_backward = landmarks_data.get('is_backward', False)
                 u = (rsh_u - lsh_u) if is_backward else (lsh_u - rsh_u)
-                shoulder_roll = float(np.arctan2(u[1], max(1e-4, abs(u[0]))))
+                raw_shoulder_roll = float(np.arctan2(u[1], max(1e-4, abs(u[0]))))
+                # Limitar el roll anatómico a +/-42° para mantener estabilidad orgánica y evitar deformaciones
+                shoulder_roll = float(np.clip(raw_shoulder_roll, -np.radians(42.0), np.radians(42.0)))
 
                 x_roll = -float(np.sin(shoulder_roll))
                 y_roll = float(np.cos(shoulder_roll))
 
                 # 2. Componente de profundidad (Pitch): inclinación hacia adelante (reverencia/saludo)
-                # medido entre centro de hombros y centro de caderas:
-                z_pitch = float(shoulder_center[2] - hip_center[2])
+                # Si world_landmarks está disponible, usamos la orientación 3D métrica en metros
+                wlms = landmarks_data.get('world_landmarks')
+                if wlms and has_hips and all(idx in wlms for idx in [11, 12, 23, 24]):
+                    sh_c_w = np.array([
+                        (wlms[11]['x'] + wlms[12]['x']) / 2.0,
+                        (wlms[11]['y'] + wlms[12]['y']) / 2.0,
+                        (wlms[11]['z'] + wlms[12]['z']) / 2.0
+                    ])
+                    hip_c_w = np.array([
+                        (wlms[23]['x'] + wlms[24]['x']) / 2.0,
+                        (wlms[23]['y'] + wlms[24]['y']) / 2.0,
+                        (wlms[23]['z'] + wlms[24]['z']) / 2.0
+                    ])
+                    # En Unity: +Y arriba (-y), +Z adelante hacia cámara (-z)
+                    w_spine = np.array([
+                        sh_c_w[0] - hip_c_w[0],
+                        -(sh_c_w[1] - hip_c_w[1]),
+                        -(sh_c_w[2] - hip_c_w[2])
+                    ])
+                    w_norm = np.linalg.norm(w_spine)
+                    if w_norm > 1e-6:
+                        w_spine /= w_norm
+                        pitch_rad = float(np.arctan2(w_spine[2], max(0.1, w_spine[1])))
+                        # Reverencia permitida hasta 60° (1.05 rad), hiperextensión atrás limitada a -10° (-0.17 rad)
+                        pitch_rad = float(np.clip(pitch_rad, -0.17, 1.05))
+                        z_pitch = float(np.sin(pitch_rad))
+                        y_pitch = float(np.cos(pitch_rad))
+                    else:
+                        z_pitch = 0.0
+                        y_pitch = 1.0
+                else:
+                    if has_hips:
+                        hip_center = (self._mp_to_unity_coords(landmarks_data[23]) +
+                                      self._mp_to_unity_coords(landmarks_data[24])) / 2.0
+                    else:
+                        hip_center = np.array([shoulder_center[0], shoulder_center[1] - 0.45, shoulder_center[2] - 0.10])
+                    z_pitch = float(shoulder_center[2] - hip_center[2])
+                    tilt_factor = abs(x_roll)
+                    if tilt_factor > 0.08:
+                        z_pitch *= max(0.0, 1.0 - tilt_factor * 0.8)
+                    z_pitch = max(-0.12, z_pitch)
+                    y_pitch = 1.0
 
-                spine_dir = np.array([x_roll, y_roll, z_pitch])
+                spine_dir = np.array([x_roll, y_roll * y_pitch, z_pitch])
                 spine_norm = np.linalg.norm(spine_dir)
                 if spine_norm > 1e-6:
                     spine_dir = spine_dir / spine_norm
+                    spine_dir = self._filter_vector("mixamorig:Spine", spine_dir)
                     spine_vec = {
                         "x": float(spine_dir[0]),
                         "y": float(spine_dir[1]),
@@ -386,30 +509,44 @@ class MixamoMapper:
             return None
 
         dx = float(l_eye['x'] - r_eye['x'])
-        dy = -float(l_eye['y'] - r_eye['y']) # Invertir Y porque en imagen +Y va hacia abajo
-        eye_dist = abs(dx)
+        dy = -float(l_eye['y'] - r_eye['y']) # Invertir Y porque en imagen +Y va hacia abajo (sistema Cartesiano)
+        eye_dist = float(np.hypot(dx, dy)) # Distancia euclidiana 2D invariante a la inclinación lateral
+        if eye_dist < 1e-4:
+            return None
 
-        # Factor de confianza según distancia 2D entre ojos:
-        # Al girar de perfil/espaldas, eye_dist disminuye. Desvanecemos a neutro suavemente
-        # en lugar de dividir por valores cercanos a cero (que causaban la deformación/caída de cabeza).
+        # Factor de confianza según distancia 2D entre ojos (invariante a inclinación lateral):
+        # Al girar de perfil/espaldas, eye_dist disminuye por escorzo 3D.
         confidence = float(np.clip((eye_dist - 0.015) / 0.035, 0.0, 1.0))
 
-        # 1. Roll (inclinación oreja hacia hombro): limitado anatómicamente a +/-30°
-        roll_deg = float(np.clip(np.degrees(np.arctan2(dy, max(1e-4, dx))), -30.0, 30.0)) * confidence
+        # 1. Roll (inclinación de ojos en el plano frontal de la cámara):
+        roll_deg = float(np.clip(np.degrees(np.arctan2(dy, dx)), -45.0, 45.0)) * confidence
 
-        # 2. Yaw (girar cabeza a izquierda o derecha):
-        mid_eyes_x = (l_eye['x'] + r_eye['x']) / 2.0
-        yaw_ratio = (nose['x'] - mid_eyes_x) / max(1e-4, eye_dist * 0.5)
+        # 2. Vectores unitarios en el sistema intrínseco de la cara:
+        # u_hat apunta a lo largo del eje ocular (de ojo derecho a ojo izquierdo)
+        u_hat = np.array([dx / eye_dist, dy / eye_dist])
+        # v_hat apunta perpendicularmente hacia abajo (de los ojos hacia nariz y mentón en Cartesiano +Y arriba)
+        v_hat = np.array([u_hat[1], -u_hat[0]])
+
+        # Vector de la nariz respecto al punto medio ocular en coordenadas Cartesianas:
+        mid_x = (l_eye['x'] + r_eye['x']) / 2.0
+        mid_y = -((l_eye['y'] + r_eye['y']) / 2.0)
+        nose_x = nose['x']
+        nose_y = -nose['y']
+        d_nose = np.array([nose_x - mid_x, nose_y - mid_y])
+
+        # 3. Yaw (rotación horizontal de cabeza izquierda/derecha):
+        # Medido como la proyección del desplazamiento nasal sobre el eje ocular u_hat.
+        # Es 100% inmune a la inclinación lateral (roll) del cuerpo o la cabeza.
+        d_yaw = float(np.dot(d_nose, u_hat))
+        yaw_ratio = d_yaw / max(1e-4, eye_dist * 0.5)
         yaw_deg = float(np.clip(yaw_ratio * 55.0, -55.0, 55.0)) * confidence
 
-        # 3. Pitch (asentir con la cabeza - decir 'SÍ'):
-        # Basado en la distancia vertical 2D de la nariz respecto a los ojos, normalizada por eye_dist.
-        # Cuando asientes hacia abajo, la nariz baja respecto a los ojos (ratio sube).
-        # Cuando miras hacia arriba, la nariz sube hacia los ojos (ratio baja).
-        mid_eyes_y = (l_eye['y'] + r_eye['y']) / 2.0
-        vert_offset = float(nose['y'] - mid_eyes_y) # Positivo porque nariz está debajo de ojos
-        ratio = vert_offset / max(1e-4, eye_dist)
-        pitch_delta = ratio - 0.65 # 0.65 es la proporción neutra promedio
+        # 4. Pitch (asentir con la cabeza - decir 'SÍ'):
+        # Medido como la proyección a lo largo del eje vertical v_hat de la cara.
+        # Es 100% inmune a la inclinación lateral y no explota ni colapsa al ladearse.
+        d_pitch = float(np.dot(d_nose, v_hat))
+        pitch_ratio = d_pitch / max(1e-4, eye_dist)
+        pitch_delta = pitch_ratio - 0.65 # 0.65 es la proporción neutra promedio
         pitch_deg = float(np.clip(pitch_delta * 90.0, -35.0, 35.0)) * confidence
 
         return {
@@ -425,39 +562,76 @@ class MixamoMapper:
     def _compute_body_yaw(self, landmarks_data: dict) -> float | None:
         """
         Calcula el ángulo de rotación horizontal del cuerpo (yaw en grados de -180° a +180°).
-        Usa el vector normal 3D del plano del torso (producto cruz hombros × columna).
-        Es 100% inmune a la inclinación lateral (roll) al agacharse o inclinarse a los lados
-        y a movimientos de brazos (Macarena, baile).
+        Usa los landmarks 3D métricos (world_landmarks) cuando están disponibles y combina
+        hombros (55%) y caderas (45%) para máxima estabilidad ante movimientos de brazos y piernas
+        (Macarena, bailes, paso de jamal / cat dance).
+        Des-proyecta la inclinación lateral (roll) del torso en el plano frontal para que
+        inclinarse a los lados no genere falsos giros de yaw.
+        Alinea el signo con Unity (+X derecha = +90°, extendiendo brazos al frente de forma natural).
         """
         if not all(idx in landmarks_data for idx in [11, 12]):
             return None
 
-        lsh = landmarks_data[11]
-        rsh = landmarks_data[12]
-
-        if lsh.get('v', 1.0) < 0.15 or rsh.get('v', 1.0) < 0.15:
+        lsh_raw = landmarks_data[11]
+        rsh_raw = landmarks_data[12]
+        if lsh_raw.get('v', 1.0) < 0.15 or rsh_raw.get('v', 1.0) < 0.15:
             return None
 
-        lsh_u = self._mp_to_unity_coords(lsh)
-        rsh_u = self._mp_to_unity_coords(rsh)
-
-        # Vector de hombros (u): de hombro derecho a hombro izquierdo en 3D
-        u = lsh_u - rsh_u
-
-        # Vector de columna (v): de caderas al centro de hombros
-        sh_center = (lsh_u + rsh_u) / 2.0
-        has_hips = (23 in landmarks_data and 24 in landmarks_data and
-                    landmarks_data[23].get('v', 1.0) >= 0.10 and landmarks_data[24].get('v', 1.0) >= 0.10)
-        if has_hips:
-            hip_center = (self._mp_to_unity_coords(landmarks_data[23]) +
-                          self._mp_to_unity_coords(landmarks_data[24])) / 2.0
-            v = sh_center - hip_center
+        # Preferir world_landmarks (métrica 3D en metros) si están disponibles para exactitud anatómica
+        wlms = landmarks_data.get('world_landmarks')
+        if (wlms and 11 in wlms and 12 in wlms and 23 in wlms and 24 in wlms and
+            wlms[11].get('v', 1.0) >= 0.15 and wlms[12].get('v', 1.0) >= 0.15):
+            # MediaPipe world: +X derecha, +Y abajo, +Z alejándose de la cámara
+            # Unity:          +X derecha, +Y arriba, +Z hacia la cámara
+            lsh_u = np.array([wlms[11]['x'], -wlms[11]['y'], -wlms[11]['z']])
+            rsh_u = np.array([wlms[12]['x'], -wlms[12]['y'], -wlms[12]['z']])
+            lhip_u = np.array([wlms[23]['x'], -wlms[23]['y'], -wlms[23]['z']])
+            rhip_u = np.array([wlms[24]['x'], -wlms[24]['y'], -wlms[24]['z']])
+            has_hips = True
         else:
-            # Perpendicular a los hombros en el plano frontal
+            lsh_u = self._mp_to_unity_coords(lsh_raw)
+            rsh_u = self._mp_to_unity_coords(rsh_raw)
+            has_hips = (23 in landmarks_data and 24 in landmarks_data and
+                        landmarks_data[23].get('v', 1.0) >= 0.10 and landmarks_data[24].get('v', 1.0) >= 0.10)
+            if has_hips:
+                lhip_u = self._mp_to_unity_coords(landmarks_data[23])
+                rhip_u = self._mp_to_unity_coords(landmarks_data[24])
+
+        # Vector de ancho del torso: combinar hombros (55%) y caderas (45%)
+        # Esto inmuniza el giro corporal contra movimientos de brazos (Macarena, cat dance)
+        u_sh = lsh_u - rsh_u
+        if has_hips:
+            u_hip = lhip_u - rhip_u
+            u = 0.55 * u_sh + 0.45 * u_hip
+            v = ((lsh_u + rsh_u) / 2.0) - ((lhip_u + rhip_u) / 2.0)
+        else:
+            u = u_sh
             v = np.array([-u[1], u[0], 0.0])
 
+        # Des-proyectar inclinación lateral (roll) del plano del torso:
+        # Al inclinarse o agacharse a los lados, el vector de columna v se inclina en XY.
+        # Des-rotar u y v en el plano XY cancela el roll y evita que la inclinación lateral contamine el yaw.
+        v_norm_xy = float(np.hypot(v[0], v[1]))
+        if v_norm_xy > 1e-4:
+            roll_angle = float(np.arctan2(v[0], v[1]))
+            cos_r = float(np.cos(-roll_angle))
+            sin_r = float(np.sin(-roll_angle))
+            u_unrolled = np.array([
+                cos_r * u[0] - sin_r * u[1],
+                sin_r * u[0] + cos_r * u[1],
+                u[2]
+            ])
+            v_unrolled = np.array([
+                cos_r * v[0] - sin_r * v[1],
+                sin_r * v[0] + cos_r * v[1],
+                v[2]
+            ])
+        else:
+            u_unrolled = u
+            v_unrolled = v
+
         # Normal al plano del torso: n = u × v (apunta hacia adelante saliendo del pecho)
-        n = np.cross(u, v)
+        n = np.cross(u_unrolled, v_unrolled)
         norm_n = np.linalg.norm(n)
         if norm_n < 1e-6:
             return None
@@ -470,20 +644,18 @@ class MixamoMapper:
         nx = float(n[0])
         nz = float(n[2])
 
-        # En vistas de perfil (60° a 120°), el vector normal u x v es continuo y
-        # transiciona suavemente por 90°. Solo aplicamos el hemisferio de is_backward
-        # en las zonas donde MediaPipe puede ser ambiguo (frente vs espalda directa: |nz| > 0.40):
-        if abs(nz) > 0.40:
+        if abs(nx) < 0.50:
             if is_backward and nz > 0:
                 nz = -nz
-            elif not is_backward and nz < 0:
+            elif not is_backward and nz < -0.70:
                 nz = abs(nz)
 
-        # Ángulo yaw en el plano horizontal XZ
-        raw_yaw_deg = float(np.degrees(np.arctan2(-nx, nz)))
-
-        # Zona muerta de 6° cuando está de frente para absorber ruido de brazos en bailes
-        if not is_backward and abs(raw_yaw_deg) < 6.0:
+        # Ángulo yaw en el plano horizontal XZ:
+        # En Unity, rotar alrededor de +Y por +90° orienta el avatar hacia +X (pantalla-derecha).
+        # Por tanto, np.arctan2(nx, nz) alinea exactamente el avatar con el usuario en pantalla.
+        raw_yaw_deg = float(np.degrees(np.arctan2(nx, nz)))
+        # Zona muerta frontal sutil de 5° para absorber micro-ruido en reposo sin bloquear giros reales
+        if not is_backward and abs(raw_yaw_deg) < 5.0:
             raw_yaw_deg = 0.0
 
         # Suavizado circular continuo de -180° a +180°
@@ -496,7 +668,8 @@ class MixamoMapper:
 
         avg_sin = float(np.mean(self._yaw_sin_history))
         avg_cos = float(np.mean(self._yaw_cos_history))
-        return float(np.degrees(np.arctan2(avg_sin, avg_cos)))
+        self._last_stable_yaw = float(np.degrees(np.arctan2(avg_sin, avg_cos)))
+        return self._last_stable_yaw
 
 
     # ------------------------------------------------------------------
@@ -544,5 +717,11 @@ class MixamoMapper:
     # ------------------------------------------------------------------
 
     def reset_cache(self):
-        """Limpia el caché de poses válidas. Llamar al iniciar/detener una sesión."""
+        """Limpia el caché de poses válidas e historiales de yaw y filtros. Llamar al iniciar/detener una sesión."""
         self._last_valid_vectors.clear()
+        self._yaw_sin_history.clear()
+        self._yaw_cos_history.clear()
+        self._last_stable_yaw = 0.0
+        for f in self._filters.values():
+            f.reset()
+        self._filters.clear()
