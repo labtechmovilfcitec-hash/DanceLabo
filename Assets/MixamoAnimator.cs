@@ -309,15 +309,15 @@ public class MixamoAnimator : MonoBehaviour
         }
 
         // Sincronización de hombros/brazos en Rigify (LABO):
-        // En Rigify, los hombros y brazos cuelgan de spine_fk.002 / torso.
-        // Al sincronizar _spineFk con la rotación de spine, tanto la malla del pecho como los brazos
+        // En Rigify, los hombros y brazos cuelgan de MCH-spine.002 / spine_fk.002.
+        // Al sincronizar _spineFk con la rotación de spine, tanto la malla del pecho como los hombros y brazos
         // se inclinan juntos hacia adelante durante una reverencia sin separarse.
-        _spineFk = FindBoneDeep(transform, "spine_fk.002") ?? FindBoneDeep(transform, "torso");
+        _spineFk = FindBoneDeep(transform, "MCH-spine.002") ?? FindBoneDeep(transform, "spine_fk.002") ?? FindBoneDeep(transform, "torso");
+        _spine1Fk = FindBoneDeep(transform, "MCH-spine.003") ?? FindBoneDeep(transform, "spine_fk.003");
         if (_spineFk != null)
         {
-            SaveInitialState(_spineFk, null);
+            SaveInitialState(_spineFk, _spine1Fk);
         }
-        _spine1Fk = FindBoneDeep(transform, "spine_fk.003");
         if (_spine1Fk != null)
         {
             SaveInitialState(_spine1Fk, null);
@@ -397,7 +397,14 @@ public class MixamoAnimator : MonoBehaviour
         // Suavizado continuo de rotación del cuerpo completo (Body Yaw) en cada frame con inercia orgánica (SmoothDamp)
         if (enableBodyYaw && _actualRoot != null)
         {
-            _currentYaw = Mathf.SmoothDampAngle(_currentYaw, _targetYaw, ref _yawVelocity, yawSmoothTime);
+            float angleDelta = Mathf.Abs(Mathf.DeltaAngle(_currentYaw, _targetYaw));
+            // Aceleración dinámica para giros y vueltas rápidas:
+            // Si la persona gira rápidamente (> 25° de diferencia), reduce el smoothTime para responder al instante sin rezago
+            float effectiveYawSmooth = (responsiveSpeedBoost && angleDelta > 25f)
+                ? Mathf.Max(0.06f, yawSmoothTime * 0.35f)
+                : yawSmoothTime;
+
+            _currentYaw = Mathf.SmoothDampAngle(_currentYaw, _targetYaw, ref _yawVelocity, effectiveYawSmooth);
             _actualRoot.rotation = _initialRootRotation * Quaternion.Euler(0f, _currentYaw, 0f);
         }
 
@@ -489,6 +496,7 @@ public class MixamoAnimator : MonoBehaviour
                     // La cabeza acompaña e integra la inclinación lateral del torso (DEF-spine.003 / DEF-spine.002)
                     Transform torsoRef = spine1 != null ? spine1 : spine;
                     Quaternion torsoTilt = Quaternion.identity;
+                    float torsoRollDeg = 0f;
                     if (torsoRef != null && _targetRotations.TryGetValue(torsoRef, out Quaternion spineRot) && _initialRotations.ContainsKey(torsoRef))
                     {
                         torsoTilt = spineRot * Quaternion.Inverse(_initialRotations[torsoRef]);
@@ -496,9 +504,16 @@ public class MixamoAnimator : MonoBehaviour
                         {
                             torsoTilt = Quaternion.Euler(0f, -_currentYaw, 0f) * torsoTilt;
                         }
+                        // Extraer inclinación lateral (roll en Z) del torso para no duplicarla con el roll de los ojos
+                        torsoRollDeg = torsoTilt.eulerAngles.z;
+                        if (torsoRollDeg > 180f) torsoRollDeg -= 360f;
                     }
 
-                    Quaternion headOffset = Quaternion.Euler(hPitch, hYaw, -hRoll);
+                    // Inclinación relativa de la cabeza sobre el cuello (evita duplicar el roll de hombros):
+                    // Si el usuario inclina todo el cuerpo, el torso rota y la cabeza acompaña naturalmente
+                    float relativeRoll = Mathf.Clamp(hRoll - torsoRollDeg, -25f, 25f);
+
+                    Quaternion headOffset = Quaternion.Euler(hPitch, hYaw, -relativeRoll);
                     Quaternion targetRot = torsoTilt * headOffset * _initialRotations[targetHead];
                     if (enableBodyYaw)
                     {
@@ -509,7 +524,7 @@ public class MixamoAnimator : MonoBehaviour
                     // Cuello: aplica 35% de la rotación para un movimiento suave y orgánico de todo el cuello
                     if (neck != null && neck != targetHead && _initialRotations.ContainsKey(neck))
                     {
-                        Quaternion neckOffset = Quaternion.Euler(hPitch * 0.35f, hYaw * 0.35f, -hRoll * 0.35f);
+                        Quaternion neckOffset = Quaternion.Euler(hPitch * 0.35f, hYaw * 0.35f, -relativeRoll * 0.35f);
                         Quaternion neckTargetRot = torsoTilt * neckOffset * _initialRotations[neck];
                         if (enableBodyYaw)
                         {
@@ -619,14 +634,26 @@ public class MixamoAnimator : MonoBehaviour
                     localDir = localDir.normalized;
             }
 
-            // 2b. Restricción anatómica para huesos de columna (Spine, Spine1):
+            // 2b. Restricción anatómica para huesos de columna (Spine, Spine1, _spineFk):
             // Flexión hacia adelante (reverencia/saludo japonés): permitida de forma completa hasta 60°.
-            // Hiperextensión hacia atrás: limitada a 15° para impedir colapsos o quiebres hacia atrás.
-            if (group == BoneGroup.Torso && (bone == spine || bone == spine1))
+            // Inclinación lateral (Roll izquierda/derecha): permitida de forma fluida y continua hasta 55°.
+            // Hiperextensión hacia atrás: limitada para impedir colapsos o quiebres hacia atrás.
+            if (group == BoneGroup.Torso && (bone == spine || bone == spine1 || bone == _spineFk || bone == _spine1Fk))
             {
+                // Limitar hyperextensión hacia atrás en Z (-Z en espacio local es hacia atrás)
+                if (localDir.z < -0.12f)
+                {
+                    localDir.z = -0.12f;
+                    if (localDir.sqrMagnitude > 1e-6f)
+                        localDir = localDir.normalized;
+                }
+
                 float angle = Vector3.Angle(initialDir, localDir);
-                bool isLeaningBack = localDir.z < (initialDir.z - 0.05f);
-                float maxAllowedAngle = isLeaningBack ? 15.0f : 60.0f;
+                // Si la persona se inclina hacia atrás (Z < initialDir.z - 0.10f) sin inclinación lateral (|X| < 0.20f),
+                // limitar a 18° para no quebrar la columna hacia atrás.
+                // En flexión frontal (reverencia) o inclinación lateral, se permite el rango completo de 60° sin bloqueos bruscos.
+                bool isPureBackwardLean = localDir.z < (initialDir.z - 0.10f) && Mathf.Abs(localDir.x) < 0.20f;
+                float maxAllowedAngle = isPureBackwardLean ? 18.0f : 60.0f;
 
                 if (angle > maxAllowedAngle)
                 {
@@ -637,14 +664,16 @@ public class MixamoAnimator : MonoBehaviour
             }
 
             // 2c. Restricción anatómica para piernas (UpLeg y Leg):
-            // Limitar la desviación angular máxima a 45° para que las patitas alienígenas
-            // se flexionen de forma armónica al agacharse sin retorcerse ni atravesar la malla.
+            // Limitar la desviación angular máxima (75° para muslos UpLeg, 60° para piernas Leg)
+            // para que las patitas alienígenas se flexionen y eleven con naturalidad al bailar o agacharse
+            // sin retorcerse ni atravesar la malla.
             if (group == BoneGroup.Leg)
             {
+                float maxLegAngle = (bone == leftUpLeg || bone == rightUpLeg) ? 75.0f : 60.0f;
                 float legAngle = Vector3.Angle(initialDir, localDir);
-                if (legAngle > 45.0f)
+                if (legAngle > maxLegAngle)
                 {
-                    localDir = Vector3.RotateTowards(initialDir, localDir, 45.0f * Mathf.Deg2Rad, 0f);
+                    localDir = Vector3.RotateTowards(initialDir, localDir, maxLegAngle * Mathf.Deg2Rad, 0f);
                 }
                 if (localDir.sqrMagnitude > 1e-6f)
                     localDir = localDir.normalized;
