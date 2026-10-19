@@ -7,25 +7,29 @@ class PoseExtractor:
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=static_image_mode,
-            model_complexity=0, # 0, 1, o 2 (1 es buen balance velocidad/precision)
+            model_complexity=1, # 1 es el modelo BlazePose completo con precisión métrica 3D
             smooth_landmarks=True,
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence
         )
         self.mp_drawing = mp.solutions.drawing_utils
-        # Face detector ultraligero para determinar si la persona está de frente o de espaldas
-        # model_selection=0 es optimizado para caras dentro de 2 metros (webcam).
         self.mp_face_detection = mp.solutions.face_detection
-        self.face_detector = self.mp_face_detection.FaceDetection(
-            min_detection_confidence=0.70,
+        # Detector de corto alcance (model_selection=0, ideal para planos medios y recortes de persona)
+        self.face_detector_short = self.mp_face_detection.FaceDetection(
+            min_detection_confidence=0.35,
             model_selection=0
         )
+        # Detector de rango completo (model_selection=1, ideal cuando la persona está a más de 2 metros)
+        self.face_detector_full = self.mp_face_detection.FaceDetection(
+            min_detection_confidence=0.35,
+            model_selection=1
+        )
         
-        # Historial de orientación con histéresis robusta (ventana de 15 frames ~ 0.5s)
-        # Responde con estabilidad en giros 360° sin parpadeos ni falsos positivos en vistas de perfil
+        # Historial de orientación con histéresis responsiva (ventana de 10 frames ~ 0.3s)
+        # Responde al instante en giros 360° sin parpadeos ni falsos positivos en vistas de perfil
         self._face_detected_history = []
         self._is_facing_backward = False
-        self._history_len = 15
+        self._history_len = 10
 
     def extract_pose(self, frame_rgb, offset=(0, 0), original_shape=None, full_frame_rgb=None):
         """
@@ -35,48 +39,45 @@ class PoseExtractor:
         results = self.pose.process(frame_rgb)
         landmarks_data = {}
 
-        # Detección de rostro sobre el recorte de la persona (frame_rgb):
-        face_results = self.face_detector.process(frame_rgb)
+        # Detección de rostro exclusivamente sobre el recorte de la persona (frame_rgb):
+        # Primero busca con corto alcance (model_selection=0); si no encuentra, prueba rango completo.
+        face_results = self.face_detector_short.process(frame_rgb)
         face_found = False
-        if face_results.detections:
+        if face_results and face_results.detections:
             for det in face_results.detections:
-                if det.score and det.score[0] >= 0.70:
-                    face_found = True
-                    break
+                score = det.score[0] if (det.score and len(det.score) > 0) else 0.0
+                if score >= 0.35:
+                    box = det.location_data.relative_bounding_box
+                    if box.ymin < 0.65:
+                        face_found = True
+                        break
 
-        # Validación con landmarks faciales de MediaPipe Pose:
-        pose_indicates_front = False
-        if results.pose_landmarks:
-            lms = results.pose_landmarks.landmark
-            nose = lms[0]
-            eye_l = lms[2]
-            eye_r = lms[5]
+        if not face_found:
+            face_results_full = self.face_detector_full.process(frame_rgb)
+            if face_results_full and face_results_full.detections:
+                for det in face_results_full.detections:
+                    score = det.score[0] if (det.score and len(det.score) > 0) else 0.0
+                    if score >= 0.35:
+                        box = det.location_data.relative_bounding_box
+                        if box.ymin < 0.65:
+                            face_found = True
+                            break
 
-            # La nariz y al menos uno de los ojos deben tener alta confianza visible
-            if nose.visibility > 0.70 and (eye_l.visibility > 0.65 or eye_r.visibility > 0.65):
-                pose_indicates_front = True
-
-        # Un frame se considera 'de frente' si los landmarks faciales de la pose apuntan a la cámara.
-        # Esto impide que reflejos en espejos de fondo o falsos positivos de cabello
-        # hagan que el personaje se voltee de frente cuando el usuario sigue de espaldas.
-        if results.pose_landmarks:
-            is_front_frame = pose_indicates_front
-        else:
-            is_front_frame = face_found
+        is_front_frame = face_found
 
         self._face_detected_history.append(is_front_frame)
         if len(self._face_detected_history) > self._history_len:
             self._face_detected_history.pop(0)
 
-        # Histéresis robusta (ventana de 15 frames ~ 0.5s):
-        # Para pasar a espaldas: requiere 11+ frames sin detección facial (front_votes <= 3 con al menos 12 frames)
-        # Para volver al frente: requiere 8+ frames con rostro claramente detectado
+        # Histéresis responsiva (ventana de 10 frames ~ 0.3s):
+        # Para pasar a espaldas: requiere al menos 7 frames continuos sin rostro (front_votes <= 2)
+        # Para volver al frente: requiere 5 frames con rostro detectado
         front_votes = sum(1 for f in self._face_detected_history if f)
         if self._is_facing_backward:
-            if front_votes >= 8:
+            if front_votes >= 5:
                 self._is_facing_backward = False
         else:
-            if front_votes <= 3 and len(self._face_detected_history) >= 12:
+            if front_votes <= 2 and len(self._face_detected_history) >= 8:
                 self._is_facing_backward = True
 
         if results.pose_landmarks and original_shape:
@@ -92,6 +93,17 @@ class PoseExtractor:
                     'y': px_y / full_w,
                     'z': (lm.z * crop_w) / full_w,
                     'v': lm.visibility
+                }
+
+            if results.pose_world_landmarks:
+                landmarks_data['world_landmarks'] = {
+                    id: {
+                        'x': float(wlm.x),
+                        'y': float(wlm.y),
+                        'z': float(wlm.z),
+                        'v': float(wlm.visibility)
+                    }
+                    for id, wlm in enumerate(results.pose_world_landmarks.landmark)
                 }
 
             # La orientación espacial 360° es manejada en 3D por MixamoMapper y MixamoAnimator.
